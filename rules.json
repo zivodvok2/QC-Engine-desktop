@@ -1,0 +1,38 @@
+{
+  "missing_threshold": 0.1,
+  "range_rules": [
+    {"column": "age", "min": 18, "max": 99},
+    {"column": "income", "min": 0, "max": 9999999},
+    {"column": "satisfaction", "min": 1, "max": 10}
+  ],
+  "logic_rules": [
+    {
+      "description": "If Q5 is No, Q6 must be null",
+      "if_column": "Q5",
+      "if_value": "No",
+      "then_column": "Q6",
+      "then_condition": "must_be_null"
+    },
+    {
+      "description": "If employed is False, job_title must be null",
+      "if_column": "employed",
+      "if_value": false,
+      "then_column": "job_title",
+      "then_condition": "must_be_null"
+    }
+  ],
+  "pattern_rules": [
+    {"column": "phone", "pattern": "^\\+?[0-9\\-\\s]{7,15}$", "description": "Valid phone format"},
+    {"column": "email", "pattern": "^[^@]+@[^@]+\\.[^@]+$", "description": "Valid email format"}
+  ],
+  "duplicate_check": {
+    "enabled": true,
+    "subset_columns": ["respondent_id"]
+  },
+  "interview_duration": {
+    "enabled": true,
+    "column": "duration_minutes",
+    "min_expected": 5,
+    "max_expected": 120
+  }
+}
