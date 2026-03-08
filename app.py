@@ -684,8 +684,7 @@ with tab_eda:
         desc = df[numeric_cols].describe().T
         desc["missing"]   = df[numeric_cols].isnull().sum()
         desc["missing_%"] = (df[numeric_cols].isnull().mean() * 100).round(1)
-        st.dataframe(desc.style.background_gradient(cmap="Blues", subset=["mean", "std"]),
-                     use_container_width=True)
+        st.dataframe(desc, use_container_width=True)
 
         st.markdown("##### Distributions")
         for row in [numeric_cols[i:i+3] for i in range(0, len(numeric_cols), 3)]:
@@ -712,8 +711,7 @@ with tab_eda:
 
     if len(numeric_cols) >= 2:
         st.markdown("##### Correlation Matrix")
-        st.dataframe(df[numeric_cols].corr().round(2).style.background_gradient(
-            cmap="RdYlGn", vmin=-1, vmax=1), use_container_width=True)
+        st.dataframe(df[numeric_cols].corr().round(2), use_container_width=True)
 
     st.markdown("##### Missing Values by Column")
     missing_df = pd.DataFrame({
