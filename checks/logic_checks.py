@@ -79,14 +79,15 @@ class DuplicateCheck(BaseCheck):
         self.subset = subset
 
     def run(self, df: pd.DataFrame) -> CheckResult:
-        subset = [c for c in self.subset if c in df.columns] if self.subset else None
-        dupes = df[df.duplicated(subset=subset, keep=False)].copy()
-        dupes["_dupe_key"] = str(subset)
-
+        subset = [c for c in self.subset if c in df.columns] if self.subset else df.columns.tolist()
+        # Deduplicate on string representation to handle all dtypes safely
+        key_series = df[subset].astype(str).apply(lambda r: "|".join(r), axis=1)
+        dupes = df[key_series.duplicated(keep=False)].copy()
+        if not dupes.empty:
+            dupes["_dupe_key"] = str(subset)
         metadata = {
             "subset": subset,
             "duplicate_count": len(dupes),
-            "unique_duplicate_groups": df.duplicated(subset=subset, keep="first").sum(),
         }
         logger.info(f"[{self.name}] {len(dupes)} duplicate rows found.")
         return self._make_result(dupes, metadata)

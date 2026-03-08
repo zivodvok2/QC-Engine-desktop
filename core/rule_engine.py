@@ -21,8 +21,11 @@ class RuleEngine:
     Collects all CheckResult objects and exposes them for reporting.
     """
 
-    def __init__(self, config_path: str = "config/rules.json"):
-        self.config = load_json_config(config_path)
+    def __init__(self, config_path: str = "config/rules.json", config: dict = None):
+        if config is not None:
+            self.config = config
+        else:
+            self.config = load_json_config(config_path)
         self.checks: List[BaseCheck] = []
         self.results: List[CheckResult] = []
         self._build_checks()
@@ -55,7 +58,8 @@ class RuleEngine:
         # Duplicate check
         dup_cfg = cfg.get("duplicate_check", {})
         if dup_cfg.get("enabled", False):
-            self.checks.append(DuplicateCheck(subset=dup_cfg.get("subset_columns")))
+            subset = dup_cfg.get("subset_columns") or None
+            self.checks.append(DuplicateCheck(subset=subset))
 
         # Duration check
         dur_cfg = cfg.get("interview_duration", {})

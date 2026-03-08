@@ -11,9 +11,9 @@ logger = setup_logger("pattern_checks")
 
 
 class PatternCheck(BaseCheck):
-    """
+    """  # noqa
     Flags values that don't match an expected regex pattern.
-    """
+    """  # noqa
     name = "pattern_check"
     issue_type = "pattern_mismatch"
     severity = "warning"
@@ -23,7 +23,7 @@ class PatternCheck(BaseCheck):
         rules: list of dicts:
         {
             "column": "phone",
-            "pattern": r"^[+]?[0-9\-\s]{7,15}$",  # noqa
+            "pattern": "^[0-9+-]+$",
             "description": "Valid phone format"
         }
         """
@@ -60,9 +60,9 @@ class PatternCheck(BaseCheck):
 
 
 class AnomalyCheck(BaseCheck):
-    """
+    """  # noqa
     Flags statistical outliers using IQR method.
-    """
+    """  # noqa
     name = "anomaly_check"
     issue_type = "statistical_anomaly"
     severity = "info"
