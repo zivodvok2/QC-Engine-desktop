@@ -11,14 +11,20 @@ from checks.missing_checks import MissingValueCheck, HighMissingColumnCheck
 from checks.range_checks import RangeCheck, DurationCheck
 from checks.logic_checks import LogicCheck, DuplicateCheck
 from checks.pattern_checks import PatternCheck, AnomalyCheck
+from checks.advanced_checks import (
+    StraightliningCheck,
+    InterviewerDurationCheck,
+    InterviewerProductivityCheck,
+    ConsentEligibilityCheck,
+    FabricationCheck,
+)
 
 logger = setup_logger("rule_engine")
 
 
 class RuleEngine:
     """
-    Loads rules from config and executes the appropriate checks.
-    Collects all CheckResult objects and exposes them for reporting.
+    Loads rules from config dict or JSON file and runs all checks.
     """
 
     def __init__(self, config_path: str = "config/rules.json", config: dict = None):
@@ -31,43 +37,97 @@ class RuleEngine:
         self._build_checks()
 
     def _build_checks(self):
-        """Instantiate checks from config."""
         cfg = self.config
 
-        # Missing value checks
+        # ── Missing ──────────────────────────────────────────────────────────
         threshold = cfg.get("missing_threshold")
         if threshold is not None:
             self.checks.append(MissingValueCheck(threshold=threshold))
             self.checks.append(HighMissingColumnCheck(threshold=threshold))
 
-        # Range checks
-        range_rules = cfg.get("range_rules", [])
-        if range_rules:
-            self.checks.append(RangeCheck(rules=range_rules))
+        # ── Range ────────────────────────────────────────────────────────────
+        if cfg.get("range_rules"):
+            self.checks.append(RangeCheck(rules=cfg["range_rules"]))
 
-        # Logic / skip-pattern checks
-        logic_rules = cfg.get("logic_rules", [])
-        if logic_rules:
-            self.checks.append(LogicCheck(rules=logic_rules))
+        # ── Logic (enhanced) ─────────────────────────────────────────────────
+        if cfg.get("logic_rules"):
+            self.checks.append(LogicCheck(rules=cfg["logic_rules"]))
 
-        # Pattern / regex checks
-        pattern_rules = cfg.get("pattern_rules", [])
-        if pattern_rules:
-            self.checks.append(PatternCheck(rules=pattern_rules))
+        # ── Patterns / regex ─────────────────────────────────────────────────
+        if cfg.get("pattern_rules"):
+            self.checks.append(PatternCheck(rules=cfg["pattern_rules"]))
 
-        # Duplicate check
-        dup_cfg = cfg.get("duplicate_check", {})
-        if dup_cfg.get("enabled", False):
-            subset = dup_cfg.get("subset_columns") or None
+        # ── Duplicates ───────────────────────────────────────────────────────
+        dup = cfg.get("duplicate_check", {})
+        if dup.get("enabled"):
+            subset = dup.get("subset_columns") or None
             self.checks.append(DuplicateCheck(subset=subset))
 
-        # Duration check
-        dur_cfg = cfg.get("interview_duration", {})
-        if dur_cfg.get("enabled", False):
+        # ── Interview duration ────────────────────────────────────────────────
+        dur = cfg.get("interview_duration", {})
+        if dur.get("enabled"):
             self.checks.append(DurationCheck(
-                column=dur_cfg["column"],
-                min_minutes=dur_cfg.get("min_expected", 5),
-                max_minutes=dur_cfg.get("max_expected", 120),
+                column=dur["column"],
+                min_minutes=dur.get("min_expected", 5),
+                max_minutes=dur.get("max_expected", 120),
+            ))
+
+        # ── Statistical anomalies (IQR) ──────────────────────────────────────
+        anomaly = cfg.get("anomaly_check", {})
+        if anomaly.get("enabled") and anomaly.get("columns"):
+            self.checks.append(AnomalyCheck(
+                columns=anomaly["columns"],
+                multiplier=anomaly.get("multiplier", 1.5),
+            ))
+
+        # ── Straightlining ───────────────────────────────────────────────────
+        sl = cfg.get("straightlining", {})
+        if sl.get("enabled") and sl.get("question_columns"):
+            self.checks.append(StraightliningCheck(
+                question_columns=sl["question_columns"],
+                threshold=sl.get("threshold", 1.0),
+                interviewer_column=sl.get("interviewer_column"),
+                min_questions=sl.get("min_questions", 3),
+            ))
+
+        # ── Interviewer duration anomaly ─────────────────────────────────────
+        int_dur = cfg.get("interviewer_duration_check", {})
+        if int_dur.get("enabled"):
+            self.checks.append(InterviewerDurationCheck(
+                interviewer_column=int_dur["interviewer_column"],
+                duration_column=int_dur["duration_column"],
+                multiplier=int_dur.get("multiplier", 1.5),
+                min_interviews=int_dur.get("min_interviews", 3),
+            ))
+
+        # ── Interviewer productivity ─────────────────────────────────────────
+        int_prod = cfg.get("interviewer_productivity_check", {})
+        if int_prod.get("enabled"):
+            self.checks.append(InterviewerProductivityCheck(
+                interviewer_column=int_prod["interviewer_column"],
+                multiplier=int_prod.get("multiplier", 1.5),
+                date_column=int_prod.get("date_column"),
+            ))
+
+        # ── Consent / eligibility ────────────────────────────────────────────
+        consent = cfg.get("consent_eligibility_check", {})
+        if consent.get("enabled"):
+            self.checks.append(ConsentEligibilityCheck(
+                screener_column=consent["screener_column"],
+                disqualify_operator=consent.get("disqualify_operator", "!="),
+                disqualify_value=consent["disqualify_value"],
+                subsequent_columns=consent.get("subsequent_columns", []),
+            ))
+
+        # ── Fabrication detection ────────────────────────────────────────────
+        fab = cfg.get("fabrication_check", {})
+        if fab.get("enabled"):
+            self.checks.append(FabricationCheck(
+                id_column=fab.get("id_column"),
+                numeric_columns=fab.get("numeric_columns", []),
+                interviewer_column=fab.get("interviewer_column"),
+                variance_threshold=fab.get("variance_threshold", 0.1),
+                sequence_run_length=fab.get("sequence_run_length", 5),
             ))
 
         logger.info(f"Rule engine initialized with {len(self.checks)} checks.")
@@ -75,16 +135,10 @@ class RuleEngine:
     def add_check(self, check: BaseCheck):
         """Register a custom check at runtime."""
         self.checks.append(check)
-        logger.info(f"Custom check registered: {check.name}")
 
     def run(self, df: pd.DataFrame) -> List[CheckResult]:
-        """
-        Execute all registered checks against the DataFrame.
-        Returns list of CheckResult objects.
-        """
         self.results = []
         logger.info(f"Running {len(self.checks)} checks on {len(df)} rows...")
-
         for check in self.checks:
             try:
                 result = check.run(df)
@@ -92,11 +146,9 @@ class RuleEngine:
                 logger.info(f"✔ {check.name}: {result.flag_count} issues flagged.")
             except Exception as e:
                 logger.error(f"✘ {check.name} failed: {e}", exc_info=True)
-
-        total_flags = sum(r.flag_count for r in self.results)
-        logger.info(f"QC complete. Total flags: {total_flags}")
+        total = sum(r.flag_count for r in self.results)
+        logger.info(f"QC complete. Total flags: {total}")
         return self.results
 
     def get_summary(self) -> pd.DataFrame:
-        """Return a summary DataFrame of all check results."""
         return pd.DataFrame([r.summary() for r in self.results])
