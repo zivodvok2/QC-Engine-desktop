@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.log
+
+# Virtual environment
+venv/
+.env/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Data files (important)
+data/raw/*
+data/processed/*
+
+# IDE
+.vscode/
+.idea/
+
+# Streamlit — commit config.toml but not credentials
+.streamlit/secrets.toml
+.streamlit/credentials.toml
+
+# Outputs
+outputs/

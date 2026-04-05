@@ -18,6 +18,7 @@ from checks.advanced_checks import (
     ConsentEligibilityCheck,
     FabricationCheck,
 )
+from checks.verbatim_checks import VerbatimQualityCheck
 
 logger = setup_logger("rule_engine")
 
@@ -128,6 +129,17 @@ class RuleEngine:
                 interviewer_column=fab.get("interviewer_column"),
                 variance_threshold=fab.get("variance_threshold", 0.1),
                 sequence_run_length=fab.get("sequence_run_length", 5),
+            ))
+
+        # ── Verbatim quality (Ollama) ─────────────────────────────────────────
+        verb = cfg.get("verbatim_check", {})
+        if verb.get("enabled") and verb.get("verbatim_columns"):
+            self.checks.append(VerbatimQualityCheck(
+                verbatim_columns=verb["verbatim_columns"],
+                model=verb.get("model", "llama3"),
+                min_score=verb.get("min_score", 2),
+                sample_size=verb.get("sample_size", 50),
+                interviewer_column=verb.get("interviewer_column"),
             ))
 
         logger.info(f"Rule engine initialized with {len(self.checks)} checks.")
