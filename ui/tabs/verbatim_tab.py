@@ -5,6 +5,7 @@ Uses Groq API to batch-score open-ended responses for grammar, coherence,
 relevance, and length quality. Free API key at https://console.groq.com
 """
 
+import os
 import streamlit as st
 import pandas as pd
 from ui.components.drag_drop import drop_zone
@@ -15,26 +16,83 @@ _SCORE_COLS = [
     "_gibberish", "_copy_paste", "_too_short",
 ]
 
+GROQ_MODELS = [
+    "llama-3.1-8b-instant",
+    "llama-3.3-70b-versatile",
+    "mixtral-8x7b-32768",
+    "gemma2-9b-it",
+]
+
+
+def _resolve_key() -> tuple[str, str]:
+    """
+    Returns (active_key, source) where source is 'server', 'personal', or ''.
+    Server key = GROQ_API_KEY env var or st.secrets.
+    Personal key = user-entered in this tab or in Settings.
+    """
+    # 1. Server key via env var
+    server = os.environ.get("GROQ_API_KEY", "").strip()
+
+    # 2. Server key via st.secrets (Streamlit Cloud / secrets.toml)
+    if not server:
+        try:
+            server = st.secrets.get("GROQ_API_KEY", "").strip()
+        except Exception:
+            pass
+
+    # 3. Personal key from session state (entered in this tab or Settings)
+    personal = st.session_state.get("ds_groq_api_key", "").strip()
+
+    if server:
+        return server, "server"
+    if personal:
+        return personal, "personal"
+    return "", ""
+
 
 def render(df: pd.DataFrame, results: list):
-    st.markdown(
-        "<p style='color:var(--ds-text2);font-size:13px;margin-bottom:16px;'>"
-        "Evaluate open-ended responses for grammar, coherence, relevance, and length "
-        "quality using <strong>Groq AI</strong> (fast, free). "
-        "Get a free API key at "
-        "<a href='https://console.groq.com' target='_blank' style='color:var(--ds-accent);'>"
-        "console.groq.com</a> and enter it in ⚙️ Settings.</p>",
-        unsafe_allow_html=True,
-    )
-
     all_cols = df.columns.tolist()
 
-    # ── API key check ─────────────────────────────────────────────────────────
-    api_key = st.session_state.get("ds_groq_api_key", "")
-    if not api_key:
-        st.warning(
-            "Groq API key not configured. Enter it in **⚙️ Settings → Verbatim checks (Groq)**."
+    active_key, key_source = _resolve_key()
+
+    # ── API key panel ─────────────────────────────────────────────────────────
+    if key_source == "server":
+        st.success("✓ Server API key active — users can add a personal key as fallback")
+    else:
+        st.markdown("#### Groq API key")
+        if key_source == "personal":
+            st.success("✓ Personal key configured")
+        else:
+            st.info(
+                "Enter a Groq API key to run verbatim checks. "
+                "**Free key** at [console.groq.com](https://console.groq.com) — "
+                "takes 30 seconds to set up."
+            )
+
+    # Always show personal key input so users can add/update theirs
+    with st.expander(
+        "🔑 " + ("Personal key (fallback when server limit is reached)"
+                 if key_source == "server" else "Enter your Groq API key"),
+        expanded=(key_source == ""),
+    ):
+        typed_key = st.text_input(
+            "Groq API key",
+            value=st.session_state.get("ds_groq_api_key", ""),
+            type="password",
+            placeholder="gsk_…",
+            key="vb_groq_key_input",
+            label_visibility="collapsed",
+            help="Your personal Groq key. Used as fallback when the server key is rate-limited.",
         )
+        if typed_key != st.session_state.get("ds_groq_api_key", ""):
+            st.session_state.ds_groq_api_key = typed_key
+            st.rerun()
+        st.caption("Free at [console.groq.com](https://console.groq.com)")
+
+    # Re-resolve after possible key entry
+    active_key, key_source = _resolve_key()
+
+    st.divider()
 
     # ── Configuration ─────────────────────────────────────────────────────────
     st.markdown("#### Configure")
@@ -59,8 +117,15 @@ def render(df: pd.DataFrame, results: list):
         int_col = int_col_sel[0] if int_col_sel else None
 
     with col_b:
-        model = st.session_state.get("ds_groq_model", "llama-3.1-8b-instant")
-        st.caption(f"Model: **{model}** · Change in ⚙️ Settings")
+        model = st.selectbox(
+            "Model",
+            options=GROQ_MODELS,
+            index=GROQ_MODELS.index(st.session_state.get("ds_groq_model", GROQ_MODELS[0]))
+                  if st.session_state.get("ds_groq_model") in GROQ_MODELS else 0,
+            key="vb_model_select",
+            help="llama-3.1-8b-instant is fastest; llama-3.3-70b-versatile is most accurate",
+        )
+        st.session_state.ds_groq_model = model
 
         sample_size = st.number_input(
             "Sample size",
@@ -74,9 +139,8 @@ def render(df: pd.DataFrame, results: list):
             help="Flag responses scoring below this on any quality dimension",
         )
         batch_size = st.number_input(
-            "Batch size",
-            min_value=1, max_value=20, value=10,
-            help="Responses scored per API call (larger = faster but may reduce accuracy)",
+            "Batch size", min_value=1, max_value=20, value=10,
+            help="Responses scored per API call (larger = fewer calls but may reduce accuracy)",
         )
 
     # Sync config so sidebar Rerun picks up current settings
@@ -84,7 +148,7 @@ def render(df: pd.DataFrame, results: list):
         "enabled":            bool(v_cols),
         "verbatim_columns":   v_cols,
         "model":              model,
-        "min_score":          min_score,
+        "min_score":          int(min_score),
         "sample_size":        int(sample_size),
         "batch_size":         int(batch_size),
         "interviewer_column": int_col,
@@ -96,15 +160,22 @@ def render(df: pd.DataFrame, results: list):
 
     st.caption(f"Checking {len(v_cols)} column(s): {', '.join(v_cols)}")
 
-    if st.button("▶ Run verbatim check", type="primary", disabled=not api_key):
+    total     = min(int(sample_size), len(df))
+    n_batches = max(1, (total + int(batch_size) - 1) // int(batch_size))
+    st.caption(f"~{n_batches} API call(s) for {total} responses at batch size {int(batch_size)}")
+
+    if st.button(
+        "▶ Run verbatim check",
+        type="primary",
+        disabled=not active_key,
+        help="Configure a Groq API key above to enable" if not active_key else None,
+    ):
         from checks.verbatim_checks import VerbatimQualityCheck
-        total = min(int(sample_size), len(df))
-        n_batches = max(1, total // int(batch_size))
-        with st.spinner(f"Scoring {total} responses in ~{n_batches} batch(es) via Groq…"):
+        with st.spinner(f"Scoring {total} responses via Groq ({model})…"):
             result = VerbatimQualityCheck(
                 verbatim_columns=v_cols,
                 model=model,
-                min_score=min_score,
+                min_score=int(min_score),
                 sample_size=int(sample_size),
                 batch_size=int(batch_size),
                 interviewer_column=int_col,
@@ -124,16 +195,16 @@ def render(df: pd.DataFrame, results: list):
 
     if meta.get("status") == "skipped":
         st.warning(f"Skipped — {meta.get('reason', 'API key not configured')}")
-        st.info(
-            "Get a free Groq API key at https://console.groq.com, then enter it in ⚙️ Settings."
-        )
         return
+
+    if meta.get("used_fallback_key"):
+        st.info("ℹ️ Server key hit rate limit — results completed using your personal key.")
 
     # Score cards
     c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("Evaluated",    meta.get("responses_evaluated", 0))
-    c2.metric("Flagged",      vb_result.flag_count)
-    c3.metric("Avg grammar",  meta.get("avg_grammar",   "—"))
+    c1.metric("Evaluated",     meta.get("responses_evaluated", 0))
+    c2.metric("Flagged",       vb_result.flag_count)
+    c3.metric("Avg grammar",   meta.get("avg_grammar",   "—"))
     c4.metric("Avg coherence", meta.get("avg_coherence", "—"))
     c5.metric("Avg relevance", meta.get("avg_relevance", "—"))
 

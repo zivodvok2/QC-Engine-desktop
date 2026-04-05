@@ -35,7 +35,14 @@ AVAILABLE_MODELS = [
 # ── Key helpers ───────────────────────────────────────────────────────────────
 
 def _server_key() -> str:
-    return os.environ.get("GROQ_API_KEY", "").strip()
+    key = os.environ.get("GROQ_API_KEY", "").strip()
+    if not key:
+        try:
+            import streamlit as st
+            key = st.secrets.get("GROQ_API_KEY", "").strip()
+        except Exception:
+            pass
+    return key
 
 
 def _user_key() -> str:
