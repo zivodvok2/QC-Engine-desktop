@@ -191,6 +191,9 @@ def render_sidebar():
             unsafe_allow_html=True,
         )
 
+        # Resolve auto-detect suggestions once here so all inputs below can use them
+        _det = st.session_state.get("_auto_detect") or {}
+
         thr = st.slider("Missing threshold", 0.0, 1.0, 0.10, 0.01, format="%.0f%%",
                         help="Flag columns/rows with more than this % missing")
         st.session_state.rules_config["missing_threshold"] = thr
@@ -215,7 +218,6 @@ def render_sidebar():
             "color:var(--ds-text2);margin-bottom:6px;'>Interviewer Checks</div>",
             unsafe_allow_html=True,
         )
-        _det = st.session_state.get("_auto_detect", {})
         int_col = st.text_input(
             "Interviewer column",
             value=_det.get("interviewer_column", "") or "",
