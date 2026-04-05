@@ -76,32 +76,34 @@ def render_settings():
 
         env_key = os.environ.get("GROQ_API_KEY", "").strip()
         if env_key:
-            # Key is pre-configured server-side — clients cannot change it
-            st.success("✓ API key pre-configured")
-            st.caption("Set via `GROQ_API_KEY` environment variable.")
-            st.session_state.ds_groq_api_key = env_key
+            st.success("✓ Server key active")
+            st.caption("Pre-configured via `GROQ_API_KEY` environment variable.")
         else:
-            # No server key — let the user supply their own
-            current_key = st.session_state.ds_groq_api_key
-            if current_key:
-                st.success("✓ API key configured")
-            else:
-                st.warning("API key not set")
+            st.warning("No server key — personal key required")
 
-            new_key = st.text_input(
-                "Groq API key",
-                value=current_key,
-                type="password",
-                placeholder="gsk_…",
-                key="groq_key_input",
-                label_visibility="collapsed",
-                help="Paste your Groq API key here",
-            )
-            if new_key != current_key:
-                st.session_state.ds_groq_api_key = new_key
-                st.rerun()
+        # Personal key — always shown; used as fallback when server key hits rate limit
+        st.markdown(
+            "<div style='font-size:11px;color:var(--ds-text2);margin:6px 0 4px;'>"
+            + ("Personal key <em>(fallback when server limit is reached)</em>"
+               if env_key else "Your Groq API key")
+            + "</div>",
+            unsafe_allow_html=True,
+        )
+        current_key = st.session_state.ds_groq_api_key
+        new_key = st.text_input(
+            "Groq API key",
+            value=current_key,
+            type="password",
+            placeholder="gsk_…",
+            key="groq_key_input",
+            label_visibility="collapsed",
+            help="Used when the server key hits its rate limit, or as the primary key if no server key is set.",
+        )
+        if new_key != current_key:
+            st.session_state.ds_groq_api_key = new_key
+            st.rerun()
 
-            st.caption("Free key at [console.groq.com](https://console.groq.com)")
+        st.caption("Free key at [console.groq.com](https://console.groq.com)")
 
         st.session_state.ds_groq_model = st.selectbox(
             "Model",

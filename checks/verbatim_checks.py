@@ -1,18 +1,14 @@
 """
 verbatim_checks.py — Verbatim response quality checks via Groq API
 
-Responses are batched into groups and scored in a single API call per batch,
-making it significantly faster than one-at-a-time scoring.
+Key resolution order:
+  1. GROQ_API_KEY environment variable  (server / built-in key)
+  2. st.session_state.ds_groq_api_key   (user's personal key)
 
-Setup:
-    1. Get a free API key at https://console.groq.com
-    2. Set it as GROQ_API_KEY env var, or enter it in Settings → Verbatim checks
+If the server key hits the rate limit (HTTP 429), the check automatically
+retries each batch with the user's personal key before giving up.
 
-Recommended models (fast + free tier):
-    llama-3.1-8b-instant      — fastest, good quality
-    llama-3.3-70b-versatile   — highest quality, slightly slower
-    mixtral-8x7b-32768        — good balance
-    gemma2-9b-it              — compact alternative
+Responses are batched: batch_size responses scored per API call.
 """
 
 import json
@@ -24,9 +20,9 @@ from core.utils import setup_logger
 
 logger = setup_logger("verbatim_checks")
 
-GROQ_API_URL   = "https://api.groq.com/openai/v1/chat/completions"
-DEFAULT_MODEL  = "llama-3.1-8b-instant"
-DEFAULT_BATCH  = 10
+GROQ_API_URL  = "https://api.groq.com/openai/v1/chat/completions"
+DEFAULT_MODEL = "llama-3.1-8b-instant"
+DEFAULT_BATCH = 10
 
 AVAILABLE_MODELS = [
     "llama-3.1-8b-instant",
@@ -36,111 +32,116 @@ AVAILABLE_MODELS = [
 ]
 
 
+# ── Key helpers ───────────────────────────────────────────────────────────────
+
+def _server_key() -> str:
+    return os.environ.get("GROQ_API_KEY", "").strip()
+
+
+def _user_key() -> str:
+    try:
+        import streamlit as st
+        return st.session_state.get("ds_groq_api_key", "").strip()
+    except Exception:
+        return ""
+
+
 def _get_api_key() -> str:
-    """Return Groq API key from env var or Streamlit session state."""
-    key = os.environ.get("GROQ_API_KEY", "")
-    if not key:
-        try:
-            import streamlit as st
-            key = st.session_state.get("ds_groq_api_key", "")
-        except Exception:
-            pass
-    return key.strip()
+    """Returns server key if set, otherwise user's personal key."""
+    return _server_key() or _user_key()
+
+
+# ── API helpers ───────────────────────────────────────────────────────────────
+
+class _RateLimited(Exception):
+    pass
 
 
 def _validate_api_key(api_key: str, model: str) -> bool:
-    """Make a minimal call to confirm the API key is valid before running batches."""
+    """Single cheap call to confirm the key is valid before running batches."""
     try:
         r = requests.post(
             GROQ_API_URL,
-            json={"model": model, "messages": [{"role": "user", "content": "hi"}], "max_tokens": 1},
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json={"model": model,
+                  "messages": [{"role": "user", "content": "hi"}],
+                  "max_tokens": 1},
+            headers={"Authorization": f"Bearer {api_key}",
+                     "Content-Type": "application/json"},
             timeout=10,
         )
         if r.status_code == 401:
-            logger.warning("[verbatim_checks] Groq API key is invalid (401 Unauthorized).")
+            logger.warning("[verbatim_checks] API key invalid (401).")
             return False
         return True
     except Exception as e:
-        logger.warning(f"[verbatim_checks] API key validation failed: {e}")
+        logger.warning(f"[verbatim_checks] Key validation failed: {e}")
         return False
 
 
 def _score_batch(texts: list, model: str, api_key: str) -> list:
     """
-    Score a list of verbatim texts in a single Groq API call.
-
-    Returns a list of score dicts (same length as texts).
-    Returns empty dicts for any entries that couldn't be scored.
+    Score a batch of verbatim texts in a single Groq API call.
+    Raises _RateLimited on HTTP 429.
+    Returns a list of score dicts the same length as texts on success,
+    or empty dicts on other failures.
     """
-    numbered = "\n".join(
-        f'{i + 1}. "{t[:400]}"' for i, t in enumerate(texts)
-    )
+    numbered = "\n".join(f'{i + 1}. "{t[:400]}"' for i, t in enumerate(texts))
     prompt = (
         f"You are a survey data quality checker. "
         f"Evaluate these {len(texts)} verbatim survey responses.\n\n"
-        f"For each, score 1–5 (5=excellent quality, 1=poor quality):\n"
+        f"For each, score 1–5 (5=excellent, 1=poor):\n"
         f"  grammar, coherence, relevance, length_quality\n\n"
         f"Also flag (true/false):\n"
-        f"  gibberish (random/nonsense characters)\n"
-        f"  copy_paste (generic filler repeated across responses)\n"
-        f"  too_short (fewer than 3 meaningful words)\n\n"
-        f"Return ONLY a valid JSON array of exactly {len(texts)} objects, one per response, "
-        f"in the same order. No explanation, no markdown.\n"
+        f"  gibberish, copy_paste, too_short\n\n"
+        f"Return ONLY a valid JSON array of exactly {len(texts)} objects in order. "
+        f"No explanation, no markdown.\n"
         f'Format: [{{"grammar":4,"coherence":3,"relevance":5,"length_quality":2,'
         f'"gibberish":false,"copy_paste":false,"too_short":false}}, ...]\n\n'
         f"Responses:\n{numbered}\n\nJSON array:"
     )
-
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type":  "application/json",
     }
     payload = {
-        "model":    model,
-        "messages": [{"role": "user", "content": prompt}],
+        "model":       model,
+        "messages":    [{"role": "user", "content": prompt}],
         "temperature": 0.1,
         "max_tokens":  150 * len(texts),
     }
-
     try:
         r = requests.post(GROQ_API_URL, json=payload, headers=headers, timeout=60)
+        if r.status_code == 429:
+            raise _RateLimited()
         r.raise_for_status()
         raw   = r.json()["choices"][0]["message"]["content"].strip()
         start = raw.find("[")
         end   = raw.rfind("]") + 1
         if start == -1 or end == 0:
-            logger.warning("Groq response did not contain a JSON array.")
+            logger.warning("Groq response missing JSON array.")
             return [{} for _ in texts]
         parsed = json.loads(raw[start:end])
-        # Ensure list matches batch length
         while len(parsed) < len(texts):
             parsed.append({})
         return parsed[: len(texts)]
-    except requests.HTTPError as e:
-        status = e.response.status_code if e.response is not None else "?"
-        logger.warning(f"Groq HTTP {status}: {e}")
+    except _RateLimited:
+        raise
     except Exception as e:
         logger.warning(f"Groq batch call failed: {e}")
-    return [{} for _ in texts]
+        return [{} for _ in texts]
 
+
+# ── Check class ───────────────────────────────────────────────────────────────
 
 class VerbatimQualityCheck(BaseCheck):
     """
     Evaluates open-ended verbatim responses using Groq API.
 
+    Uses the server key (GROQ_API_KEY env var) if available.
+    Falls back to the user's personal key on rate limit (HTTP 429).
+
     Responses are processed in configurable batches — e.g. batch_size=10
     means 100 responses requires only 10 API calls instead of 100.
-
-    Config example:
-    {
-        "verbatim_columns":   ["Q10_verbatim", "comments"],
-        "model":              "llama-3.1-8b-instant",
-        "min_score":          2,
-        "sample_size":        100,
-        "batch_size":         10,
-        "interviewer_column": "interviewer_id"
-    }
     """
     name       = "verbatim_quality_check"
     issue_type = "verbatim_quality"
@@ -149,11 +150,11 @@ class VerbatimQualityCheck(BaseCheck):
     def __init__(
         self,
         verbatim_columns:   list,
-        model:              str   = DEFAULT_MODEL,
-        min_score:          int   = 2,
-        sample_size:        int   = 100,
-        batch_size:         int   = DEFAULT_BATCH,
-        interviewer_column: str   = None,
+        model:              str = DEFAULT_MODEL,
+        min_score:          int = 2,
+        sample_size:        int = 100,
+        batch_size:         int = DEFAULT_BATCH,
+        interviewer_column: str = None,
     ):
         self.verbatim_columns   = verbatim_columns
         self.model              = model
@@ -163,17 +164,17 @@ class VerbatimQualityCheck(BaseCheck):
         self.interviewer_column = interviewer_column
 
     def run(self, df: pd.DataFrame) -> CheckResult:
-        api_key = _get_api_key()
+        srv_key  = _server_key()
+        usr_key  = _user_key()
+        api_key  = srv_key or usr_key
+
         if not api_key:
-            logger.warning(
-                f"[{self.name}] Groq API key not set. "
-                "Set GROQ_API_KEY env var or enter it in Settings."
-            )
+            logger.warning(f"[{self.name}] No API key configured.")
             return self._make_result(df.iloc[0:0], {
                 "status": "skipped",
                 "reason": (
                     "Groq API key not configured. "
-                    "Get a free key at https://console.groq.com"
+                    "Set GROQ_API_KEY env var or enter a personal key in ⚙️ Settings."
                 ),
             })
 
@@ -184,11 +185,11 @@ class VerbatimQualityCheck(BaseCheck):
                 "reason": "No verbatim columns found in dataset",
             })
 
-        # Validate key with a single cheap call before running all batches
+        # Quick validation before running all batches
         if not _validate_api_key(api_key, self.model):
             return self._make_result(df.iloc[0:0], {
                 "status": "skipped",
-                "reason": "Groq API key is invalid (401 Unauthorized). Check your key in ⚙️ Settings.",
+                "reason": "API key is invalid (401). Check your key in ⚙️ Settings.",
             })
 
         sample = (
@@ -199,9 +200,9 @@ class VerbatimQualityCheck(BaseCheck):
 
         all_flagged:        list = []
         scores_accumulator: list = []
+        used_fallback:      bool = False
 
         for col in cols:
-            # Collect non-empty texts with their original DataFrame indices
             rows_to_score = [
                 (idx, str(row[col]))
                 for idx, row in sample.iterrows()
@@ -215,22 +216,45 @@ class VerbatimQualityCheck(BaseCheck):
             logger.info(
                 f"[{self.name}] Scoring '{col}': "
                 f"{len(rows_to_score)} responses in {n_batches} batch(es) "
-                f"(model={self.model})"
+                f"(key={'server' if api_key == srv_key else 'personal'}, model={self.model})"
             )
 
-            # Process batches
             idx_to_score: dict = {}
             for i in range(0, len(rows_to_score), self.batch_size):
-                batch  = rows_to_score[i : i + self.batch_size]
-                idxs   = [r[0] for r in batch]
-                texts  = [r[1] for r in batch]
-                scores = _score_batch(texts, self.model, api_key)
+                batch = rows_to_score[i : i + self.batch_size]
+                idxs  = [r[0] for r in batch]
+                texts = [r[1] for r in batch]
+
+                try:
+                    scores = _score_batch(texts, self.model, api_key)
+                except _RateLimited:
+                    # Server key hit the rate limit — try user's personal key
+                    if api_key == srv_key and usr_key and usr_key != srv_key:
+                        logger.info(
+                            f"[{self.name}] Server key rate-limited. "
+                            "Falling back to personal key."
+                        )
+                        api_key     = usr_key
+                        used_fallback = True
+                        try:
+                            scores = _score_batch(texts, self.model, api_key)
+                        except _RateLimited:
+                            logger.warning(
+                                f"[{self.name}] Personal key also rate-limited. "
+                                "Stopping batch."
+                            )
+                            break
+                    else:
+                        logger.warning(
+                            f"[{self.name}] Rate-limited and no fallback key available."
+                        )
+                        break
+
                 for idx, score in zip(idxs, scores):
                     idx_to_score[idx] = score
 
             scores_accumulator.extend(idx_to_score.values())
 
-            # Identify flagged rows
             for idx, scores in idx_to_score.items():
                 if not scores:
                     continue
@@ -266,6 +290,7 @@ class VerbatimQualityCheck(BaseCheck):
             "responses_evaluated": len(scores_accumulator),
             "flagged":             len(combined),
             "status":              "completed",
+            "used_fallback_key":   used_fallback,
         }
         if scores_accumulator:
             for dim in ["grammar", "coherence", "relevance", "length_quality"]:
@@ -278,12 +303,15 @@ class VerbatimQualityCheck(BaseCheck):
             and self.interviewer_column in df.columns
             and not combined.empty
         ):
-            int_sum = (
+            meta["interviewer_summary"] = (
                 combined.groupby(self.interviewer_column)
                 .size()
                 .reset_index(name="flagged_verbatim_count")
+                .to_dict(orient="records")
             )
-            meta["interviewer_summary"] = int_sum.to_dict(orient="records")
 
-        logger.info(f"[{self.name}] {len(combined)} low-quality responses flagged.")
+        logger.info(
+            f"[{self.name}] {len(combined)} low-quality responses flagged "
+            f"({'used fallback key' if used_fallback else 'server key'})."
+        )
         return self._make_result(combined, meta)
