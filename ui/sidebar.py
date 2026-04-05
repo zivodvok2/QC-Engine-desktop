@@ -5,12 +5,65 @@ Handles file upload, basic QC settings, logic rule builder,
 advanced check toggles, and settings panel.
 """
 
+import json
+import requests
 import streamlit as st
 import pandas as pd
 from core.loader import DataLoader
 from core.cleaner import DataCleaner
 from core.rule_engine import RuleEngine
 from ui.settings import render_settings, init_settings
+
+
+def _auto_detect_columns(df: pd.DataFrame) -> dict | None:
+    """
+    Use Groq to suggest column assignments (interviewer, duration, id, verbatim)
+    from column names and a small sample of values.
+    """
+    try:
+        from checks.verbatim_checks import _get_api_key
+        api_key = _get_api_key()
+    except Exception:
+        return None
+    if not api_key:
+        return None
+
+    sample_rows = df.head(3).to_dict(orient="records")
+    col_names = df.columns.tolist()
+
+    prompt = (
+        "You are analyzing a survey dataset. Given these column names and sample rows, "
+        "identify which columns serve each role.\n\n"
+        f"Columns: {col_names}\n\n"
+        f"Sample rows (first 3): {json.dumps(sample_rows, default=str)[:2000]}\n\n"
+        "Return ONLY a JSON object with these keys (use null if unsure):\n"
+        '{"interviewer_column": "col_name_or_null", '
+        '"duration_column": "col_name_or_null", '
+        '"id_column": "col_name_or_null", '
+        '"verbatim_columns": ["col1", "col2"]}\n\n'
+        "Only include column names that actually exist in the list. No explanation."
+    )
+    try:
+        r = requests.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            json={
+                "model": "llama-3.1-8b-instant",
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.1,
+                "max_tokens": 300,
+            },
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            timeout=15,
+        )
+        r.raise_for_status()
+        raw = r.json()["choices"][0]["message"]["content"].strip()
+        start = raw.find("{")
+        end   = raw.rfind("}") + 1
+        if start == -1 or end == 0:
+            return None
+        return json.loads(raw[start:end])
+    except Exception:
+        return None
 
 
 def init_state():
@@ -102,6 +155,27 @@ def render_sidebar():
                 except Exception as e:
                     st.error(f"Error: {e}")
 
+        # Auto-detect columns
+        if st.session_state.df_clean is not None:
+            if st.button("🔍 Auto-detect columns", use_container_width=True,
+                         help="Use Groq AI to suggest interviewer, duration, ID, and verbatim columns"):
+                with st.spinner("Detecting column types…"):
+                    suggestions = _auto_detect_columns(st.session_state.df_clean)
+                if suggestions:
+                    st.session_state["_auto_detect"] = suggestions
+                    st.success("Columns detected — applied below")
+                    st.rerun()
+                else:
+                    st.warning("Could not detect — check Groq API key in ⚙️ Settings")
+
+            if st.session_state.get("_auto_detect"):
+                det = st.session_state["_auto_detect"]
+                if any(v for v in det.values()):
+                    with st.expander("🔍 Detected columns", expanded=False):
+                        for k, v in det.items():
+                            if v:
+                                st.caption(f"{k}: **{v}**")
+
         if st.session_state.df_clean is not None:
             df = st.session_state.df_clean
             st.caption(
@@ -121,8 +195,11 @@ def render_sidebar():
                         help="Flag columns/rows with more than this % missing")
         st.session_state.rules_config["missing_threshold"] = thr
 
-        dur_col = st.text_input("Duration column", value="duration_minutes",
-                                help="Column holding interview duration in minutes")
+        dur_col = st.text_input(
+            "Duration column",
+            value=_det.get("duration_column", "") or "duration_minutes",
+            help="Column holding interview duration in minutes",
+        )
         min_dur = st.number_input("Min duration (mins)", value=5,   min_value=0)
         max_dur = st.number_input("Max duration (mins)", value=120, min_value=1)
         st.session_state.rules_config["interview_duration"] = {
@@ -138,9 +215,12 @@ def render_sidebar():
             "color:var(--ds-text2);margin-bottom:6px;'>Interviewer Checks</div>",
             unsafe_allow_html=True,
         )
+        _det = st.session_state.get("_auto_detect", {})
         int_col = st.text_input(
-            "Interviewer column", placeholder="interviewer_id",
-            help="Column identifying each interviewer"
+            "Interviewer column",
+            value=_det.get("interviewer_column", "") or "",
+            placeholder="interviewer_id",
+            help="Column identifying each interviewer",
         )
 
         id_on = st.toggle("Duration anomaly", value=False,

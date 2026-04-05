@@ -10,6 +10,48 @@ import streamlit as st
 import pandas as pd
 from ui.components.drag_drop import drop_zone
 
+
+# ── Similar response detection ────────────────────────────────────────────────
+
+def _jaccard(a: str, b: str) -> float:
+    wa = set(str(a).lower().split())
+    wb = set(str(b).lower().split())
+    if not wa or not wb or len(wa) < 3:
+        return 0.0
+    return len(wa & wb) / len(wa | wb)
+
+
+def _find_similar_pairs(df: pd.DataFrame, col: str, threshold: float = 0.6,
+                        interviewer_col: str = None, max_pairs: int = 200) -> pd.DataFrame:
+    """
+    Find pairs of responses in col with Jaccard similarity >= threshold.
+    If interviewer_col given, only compare within the same interviewer.
+    """
+    rows = [(i, str(v)) for i, v in df[col].items() if pd.notna(v) and len(str(v).split()) >= 3]
+    pairs = []
+    for a in range(len(rows)):
+        for b in range(a + 1, len(rows)):
+            ia, ta = rows[a]
+            ib, tb = rows[b]
+            if interviewer_col:
+                int_a = df.at[ia, interviewer_col] if interviewer_col in df.columns else None
+                int_b = df.at[ib, interviewer_col] if interviewer_col in df.columns else None
+                if int_a != int_b:
+                    continue
+            sim = _jaccard(ta, tb)
+            if sim >= threshold:
+                pairs.append({
+                    "similarity": round(sim, 3),
+                    "index_A": ia,
+                    "response_A": ta[:200],
+                    "index_B": ib,
+                    "response_B": tb[:200],
+                    **({"interviewer": df.at[ia, interviewer_col]} if interviewer_col and interviewer_col in df.columns else {}),
+                })
+            if len(pairs) >= max_pairs:
+                return pd.DataFrame(pairs)
+    return pd.DataFrame(pairs)
+
 _SCORE_COLS = [
     "_verbatim_column", "_verbatim_text",
     "_grammar_score", "_coherence_score", "_relevance_score", "_length_quality",
@@ -225,3 +267,45 @@ def render(df: pd.DataFrame, results: list):
             pd.DataFrame(meta["interviewer_summary"]),
             width="stretch", hide_index=True,
         )
+
+    # ── Similar response detection ─────────────────────────────────────────────
+    st.divider()
+    st.markdown("#### Similar Response Detection")
+    st.markdown(
+        "<p style='color:var(--ds-text2);font-size:13px;margin-bottom:12px;'>"
+        "Detect responses that are suspiciously similar to each other — "
+        "possible copy-paste between interviewers or fabricated data.</p>",
+        unsafe_allow_html=True,
+    )
+
+    sim_col_opts = ["— select —"] + [c for c in df.columns.tolist()]
+    sim_col_sel = st.selectbox("Verbatim column to check", sim_col_opts, key="sim_col")
+    sim_int_col_sel = st.selectbox(
+        "Group by interviewer (optional — compares within same interviewer only)",
+        ["— none —"] + df.columns.tolist(), key="sim_int_col",
+    )
+    sim_threshold = st.slider(
+        "Similarity threshold", 0.3, 1.0, 0.6, 0.05,
+        help="Jaccard word-overlap similarity. 0.6 = 60% of words in common.",
+        key="sim_thresh",
+    )
+
+    if st.button("🔍 Detect similar responses", key="sim_run"):
+        if sim_col_sel == "— select —":
+            st.warning("Select a column first.")
+        else:
+            int_col_arg = sim_int_col_sel if sim_int_col_sel != "— none —" else None
+            with st.spinner("Scanning for similar responses…"):
+                sim_df = _find_similar_pairs(df, sim_col_sel, sim_threshold, int_col_arg)
+            st.session_state["_sim_result"] = sim_df
+
+    sim_result = st.session_state.get("_sim_result")
+    if sim_result is not None:
+        if sim_result.empty:
+            st.success(f"No pairs found above {sim_threshold:.0%} similarity.")
+        else:
+            st.metric("Suspicious pairs found", len(sim_result))
+            st.dataframe(
+                sim_result.sort_values("similarity", ascending=False),
+                width="stretch", hide_index=True,
+            )

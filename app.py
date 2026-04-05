@@ -13,10 +13,16 @@ from datetime import datetime
 import streamlit as st
 import pandas as pd
 
+import json
+from pathlib import Path
+
 from ui.sidebar import render_sidebar, init_state
 from ui.settings import get_theme_css, init_settings
 from ui.onboarding import render_onboarding
-from ui.tabs import qc_tab, eda_tab, logic_tab, straightlining_tab, data_tab, verbatim_tab
+from ui.tabs import (qc_tab, eda_tab, logic_tab, straightlining_tab,
+                     data_tab, verbatim_tab, interviewer_tab, compare_tab)
+
+PROFILES_DIR = Path(__file__).parent / "profiles"
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -118,7 +124,7 @@ results  = st.session_state.qc_results
 filename = st.session_state.filename
 
 
-# ── Report builder ────────────────────────────────────────────────────────────
+# ── Report builders ───────────────────────────────────────────────────────────
 def build_report(df_clean: pd.DataFrame, qc_results: list) -> io.BytesIO:
     out = io.BytesIO()
     with pd.ExcelWriter(out, engine="openpyxl") as writer:
@@ -139,8 +145,77 @@ def build_report(df_clean: pd.DataFrame, qc_results: list) -> io.BytesIO:
     return out
 
 
+def build_pdf_report(filename: str, df: pd.DataFrame, qc_results: list) -> bytes:
+    """Generate a formatted HTML report (open in browser, File → Print → Save as PDF)."""
+    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    total_flags = sum(r.flag_count for r in qc_results)
+    crits  = sum(1 for r in qc_results if r.severity == "critical" and r.flag_count > 0)
+    warns  = sum(1 for r in qc_results if r.severity == "warning"  and r.flag_count > 0)
+
+    summary_rows = "".join(
+        f"<tr><td>{r.check_name}</td><td>{r.severity}</td><td>{r.flag_count:,}</td>"
+        f"<td>{r.flag_count / max(len(df), 1) * 100:.1f}%</td></tr>"
+        for r in sorted(qc_results, key=lambda x: -x.flag_count)
+    )
+
+    flagged_sections = ""
+    for r in [x for x in qc_results if x.flag_count > 0]:
+        show = [c for c in r.flagged_rows.columns if not c.startswith("_")]
+        sample = r.flagged_rows[show].head(50)
+        th = "".join(f"<th>{c}</th>" for c in sample.columns)
+        tbody = "".join(
+            "<tr>" + "".join(f"<td>{v}</td>" for v in row) + "</tr>"
+            for row in sample.itertuples(index=False)
+        )
+        sev_color = {"critical": "#f04a6a", "warning": "#f0c04a", "info": "#4a9ef0"}.get(r.severity, "#888")
+        flagged_sections += f"""
+        <h3 style="color:{sev_color};border-left:4px solid {sev_color};padding-left:10px;margin-top:32px;">
+            {r.check_name} — {r.flag_count:,} flags
+        </h3>
+        <table><thead><tr>{th}</tr></thead><tbody>{tbody}</tbody></table>
+        """
+
+    html = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
+    <title>DataSense QC Report — {filename}</title>
+    <style>
+        body {{ font-family: 'DM Mono', monospace, sans-serif; margin: 40px; color: #1a1a2e; font-size: 13px; }}
+        h1 {{ font-size: 28px; margin-bottom: 4px; }}
+        h2 {{ font-size: 16px; color: #555; border-bottom: 1px solid #ddd; padding-bottom: 8px; margin-top: 32px; }}
+        h3 {{ font-size: 14px; margin-bottom: 8px; }}
+        .meta {{ color: #888; font-size: 12px; margin-bottom: 32px; }}
+        .cards {{ display: flex; gap: 20px; flex-wrap: wrap; margin: 20px 0; }}
+        .card {{ background: #f5f7ff; border: 1px solid #dde; border-radius: 8px; padding: 16px 24px; min-width: 120px; }}
+        .card .val {{ font-size: 28px; font-weight: 800; }}
+        .card .lbl {{ font-size: 11px; color: #888; text-transform: uppercase; letter-spacing: 0.08em; }}
+        table {{ border-collapse: collapse; width: 100%; margin-top: 8px; font-size: 12px; }}
+        th {{ background: #f0f2ff; text-align: left; padding: 6px 10px; border: 1px solid #dde; }}
+        td {{ padding: 5px 10px; border: 1px solid #eee; word-break: break-word; max-width: 300px; }}
+        tr:nth-child(even) td {{ background: #fafafa; }}
+        @media print {{ .no-print {{ display: none; }} }}
+    </style></head><body>
+    <h1>DataSense QC Report</h1>
+    <div class="meta">{filename} &nbsp;·&nbsp; {len(df):,} rows · {len(df.columns)} columns &nbsp;·&nbsp; Generated {now}</div>
+
+    <div class="cards">
+        <div class="card"><div class="val">{len(qc_results)}</div><div class="lbl">Checks run</div></div>
+        <div class="card"><div class="val" style="color:#f04a6a">{total_flags:,}</div><div class="lbl">Total flags</div></div>
+        <div class="card"><div class="val" style="color:#f04a6a">{crits}</div><div class="lbl">Critical</div></div>
+        <div class="card"><div class="val" style="color:#f0c04a">{warns}</div><div class="lbl">Warnings</div></div>
+    </div>
+
+    <h2>Check Summary</h2>
+    <table><thead><tr><th>Check</th><th>Severity</th><th>Flags</th><th>Flag Rate</th></tr></thead>
+    <tbody>{summary_rows}</tbody></table>
+
+    <h2>Flagged Records</h2>
+    {flagged_sections if flagged_sections else "<p style='color:#888'>No flags — dataset passed all checks.</p>"}
+
+    </body></html>"""
+    return html.encode("utf-8")
+
+
 # ── Header ────────────────────────────────────────────────────────────────────
-h1, h2 = st.columns([5, 1])
+h1, h2, h3 = st.columns([5, 1, 1])
 with h1:
     st.markdown(f"### {filename}")
     st.caption(
@@ -149,20 +224,29 @@ with h1:
     )
 with h2:
     st.download_button(
-        "↓ Report",
+        "↓ Excel",
         data=build_report(df, results),
         file_name=f"QC_{filename.rsplit('.', 1)[0]}_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         use_container_width=True,
         type="primary",
     )
+with h3:
+    st.download_button(
+        "↓ PDF",
+        data=build_pdf_report(filename, df, results),
+        file_name=f"QC_{filename.rsplit('.', 1)[0]}_{datetime.now().strftime('%Y%m%d_%H%M')}.html",
+        mime="text/html",
+        use_container_width=True,
+        help="Downloads as HTML — open in browser and File → Print → Save as PDF",
+    )
 
 st.divider()
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
-tab_qc, tab_logic, tab_sl, tab_verb, tab_int, tab_eda, tab_data, tab_cfg = st.tabs([
+tab_qc, tab_logic, tab_sl, tab_verb, tab_int, tab_eda, tab_data, tab_cmp, tab_cfg = st.tabs([
     "QC Report", "Logic", "Straightlining", "Verbatim",
-    "Interviewers", "EDA", "Data", "Config",
+    "Interviewers", "EDA", "Data", "Compare", "Config",
 ])
 
 with tab_qc:
@@ -177,57 +261,8 @@ with tab_sl:
 with tab_verb:
     verbatim_tab.render(df, results)
 
-# ── Interviewers tab (inline — no standalone ui module yet) ───────────────────
 with tab_int:
-    st.markdown("#### Interviewer Analysis")
-
-    dur_r  = next((r for r in results if r.check_name == "interviewer_duration_check"),    None)
-    prod_r = next((r for r in results if r.check_name == "interviewer_productivity_check"), None)
-    fab_r  = next((r for r in results if r.check_name == "fabrication_check"),              None)
-
-    if not any([dur_r, prod_r, fab_r]):
-        st.info("Enable interviewer checks in the sidebar and re-run QC.")
-    else:
-        if dur_r and dur_r.flag_count > 0:
-            st.markdown("##### Duration anomalies")
-            meta = dur_r.metadata
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Outlier interviewers", meta.get("outlier_interviewers", 0))
-            c2.metric("Too fast",             meta.get("too_fast", 0))
-            c3.metric("Too slow",             meta.get("too_slow", 0))
-            show = [c for c in dur_r.flagged_rows.columns if not c.startswith("_")]
-            st.dataframe(
-                dur_r.flagged_rows[show].drop_duplicates(),
-                width="stretch", hide_index=True,
-            )
-        elif dur_r:
-            st.success("Duration check passed — no outlier interviewers.")
-
-        if prod_r and prod_r.flag_count > 0:
-            st.markdown("##### Productivity outliers")
-            meta = prod_r.metadata
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Outlier interviewers", meta.get("outlier_interviewers", 0))
-            c2.metric("Unusually high",       meta.get("unusually_high", 0))
-            c3.metric("Unusually low",        meta.get("unusually_low",  0))
-            show = [c for c in prod_r.flagged_rows.columns if not c.startswith("_")]
-            st.dataframe(
-                prod_r.flagged_rows[show].drop_duplicates(),
-                width="stretch", hide_index=True,
-            )
-        elif prod_r:
-            st.success("Productivity check passed — no outlier interviewers.")
-
-        if fab_r and fab_r.flag_count > 0:
-            st.markdown("##### Fabrication flags")
-            show = [c for c in fab_r.flagged_rows.columns if not c.startswith("_")]
-            st.dataframe(
-                fab_r.flagged_rows[show].head(100),
-                width="stretch", hide_index=True,
-            )
-            st.json(fab_r.metadata, expanded=False)
-        elif fab_r:
-            st.success("Fabrication check passed — no suspicious patterns detected.")
+    interviewer_tab.render(df, results)
 
 with tab_eda:
     eda_tab.render(df, results)
@@ -235,7 +270,54 @@ with tab_eda:
 with tab_data:
     data_tab.render(df)
 
+with tab_cmp:
+    compare_tab.render(df)
+
 with tab_cfg:
+    st.markdown("#### Config Profiles")
+    st.markdown(
+        "<p style='color:var(--ds-text2);font-size:13px;margin-bottom:12px;'>"
+        "Save the current rule configuration as a named profile and reload it for future waves.</p>",
+        unsafe_allow_html=True,
+    )
+
+    PROFILES_DIR.mkdir(exist_ok=True)
+    saved_profiles = sorted(PROFILES_DIR.glob("*.json"))
+
+    cp1, cp2 = st.columns([3, 1])
+    with cp1:
+        profile_name = st.text_input("Profile name", placeholder="Ipsos Kenya Household 2025",
+                                     key="cfg_profile_name")
+    with cp2:
+        st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+        if st.button("💾 Save", use_container_width=True, key="cfg_save"):
+            if profile_name.strip():
+                safe = "".join(c if c.isalnum() or c in " _-" else "_" for c in profile_name.strip())
+                path = PROFILES_DIR / f"{safe}.json"
+                payload = {
+                    "rules_config": st.session_state.rules_config,
+                    "custom_logic_rules": st.session_state.custom_logic_rules,
+                }
+                path.write_text(json.dumps(payload, indent=2))
+                st.success(f"Saved: {path.name}")
+                st.rerun()
+            else:
+                st.warning("Enter a profile name first.")
+
+    if saved_profiles:
+        st.markdown("##### Load a saved profile")
+        profile_opts = {p.stem: p for p in saved_profiles}
+        selected_profile = st.selectbox("Saved profiles", ["— select —"] + list(profile_opts.keys()),
+                                        key="cfg_load_sel")
+        if st.button("↩ Load profile", key="cfg_load_btn"):
+            if selected_profile != "— select —":
+                data = json.loads(profile_opts[selected_profile].read_text())
+                st.session_state.rules_config = data.get("rules_config", st.session_state.rules_config)
+                st.session_state.custom_logic_rules = data.get("custom_logic_rules", [])
+                st.success(f"Profile '{selected_profile}' loaded — click ↺ Rerun QC to apply.")
+                st.rerun()
+
+    st.divider()
     st.markdown("#### Active Config")
     st.json(st.session_state.rules_config)
     st.markdown("#### Custom Logic Rules")

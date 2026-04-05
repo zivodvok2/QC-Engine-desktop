@@ -64,3 +64,74 @@ def render(df: pd.DataFrame, results: list):
         width="stretch",
         hide_index=True,
     )
+
+    # ── Sign-off workflow ─────────────────────────────────────────────────────
+    flagged_results = [r for r in results if r.flag_count > 0 and not r.flagged_rows.empty]
+    if not flagged_results:
+        return
+
+    st.divider()
+    st.markdown("#### 📋 Review Workflow")
+    st.markdown(
+        "<p style='color:var(--ds-text2);font-size:13px;margin-bottom:12px;'>"
+        "Mark flagged records as <strong>Accepted</strong> (valid data, no action) or "
+        "<strong>Rejected</strong> (re-interview needed). Export only unreviewed flags.</p>",
+        unsafe_allow_html=True,
+    )
+
+    # Build combined flagged table
+    pieces = []
+    for r in flagged_results:
+        chunk = r.flagged_rows.copy()
+        chunk["_check"] = r.check_name
+        show_cols = [c for c in chunk.columns if not c.startswith("_")] + ["_check"]
+        pieces.append(chunk[show_cols])
+
+    combined = pd.concat(pieces, ignore_index=True)
+    combined.insert(0, "Status", "Pending")
+
+    # Restore saved review state
+    saved = st.session_state.get("_review_state", {})
+    for idx, status in saved.items():
+        if idx < len(combined):
+            combined.at[idx, "Status"] = status
+
+    edited = st.data_editor(
+        combined,
+        column_config={
+            "Status": st.column_config.SelectboxColumn(
+                "Status",
+                options=["Pending", "Accepted", "Rejected"],
+                required=True,
+                width="small",
+            )
+        },
+        hide_index=True,
+        width="stretch",
+        key="review_editor",
+        num_rows="fixed",
+    )
+
+    # Persist review state
+    st.session_state["_review_state"] = edited["Status"].to_dict()
+
+    pending   = (edited["Status"] == "Pending").sum()
+    accepted  = (edited["Status"] == "Accepted").sum()
+    rejected  = (edited["Status"] == "Rejected").sum()
+
+    rc1, rc2, rc3 = st.columns(3)
+    rc1.metric("Pending review", int(pending))
+    rc2.metric("Accepted",       int(accepted))
+    rc3.metric("Rejected",       int(rejected))
+
+    unreviewed = edited[edited["Status"] == "Pending"]
+    if not unreviewed.empty:
+        import io
+        buf = io.BytesIO()
+        unreviewed.to_excel(buf, index=False)
+        st.download_button(
+            "↓ Export pending flags",
+            data=buf.getvalue(),
+            file_name="pending_flags.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
