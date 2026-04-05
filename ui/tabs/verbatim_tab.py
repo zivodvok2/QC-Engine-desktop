@@ -55,19 +55,18 @@ def render(df: pd.DataFrame, results: list):
 
     active_key, key_source = _resolve_key()
 
+    # ── Description — always visible ──────────────────────────────────────────
+    st.info(
+        "Evaluate open-ended responses for grammar, coherence, relevance, and length quality "
+        "using Groq AI (fast, free). Get a free API key at "
+        "[console.groq.com](https://console.groq.com) and enter it below."
+    )
+
     # ── API key panel ─────────────────────────────────────────────────────────
     if key_source == "server":
         st.success("✓ Server API key active — users can add a personal key as fallback")
-    else:
-        st.markdown("#### Groq API key")
-        if key_source == "personal":
-            st.success("✓ Personal key configured")
-        else:
-            st.info(
-                "Enter a Groq API key to run verbatim checks. "
-                "**Free key** at [console.groq.com](https://console.groq.com) — "
-                "takes 30 seconds to set up."
-            )
+    elif key_source == "personal":
+        st.success("✓ Personal key configured")
 
     # Always show personal key input so users can add/update theirs
     with st.expander(

@@ -40,7 +40,7 @@ def init_settings():
     if "ds_theme" not in st.session_state:
         st.session_state.ds_theme = "dark"
     if "ds_groq_api_key" not in st.session_state:
-        st.session_state.ds_groq_api_key = os.environ.get("GROQ_API_KEY", "")
+        st.session_state.ds_groq_api_key = ""
     if "ds_groq_model" not in st.session_state:
         st.session_state.ds_groq_model = GROQ_MODELS[0]
 
