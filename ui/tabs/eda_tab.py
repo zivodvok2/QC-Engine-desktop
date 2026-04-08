@@ -9,6 +9,8 @@ Performance notes:
 - Scatter plots are capped at SCATTER_SAMPLE rows to keep rendering fast.
 """
 
+import json
+import requests
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -103,6 +105,57 @@ CHART_TYPES = {
     "Box plot":     "box",
 }
 
+_CHART_TYPE_REVERSE = {v: k for k, v in CHART_TYPES.items()}
+
+
+def _nl_to_chart(description: str, all_cols: list, num_cols: list) -> dict | None:
+    """Convert a plain-English chart request to chart config JSON via Groq."""
+    try:
+        from checks.verbatim_checks import _get_api_key
+        api_key = _get_api_key()
+    except Exception:
+        return None
+    if not api_key:
+        return None
+
+    prompt = (
+        f'Convert this data visualization request to chart configuration JSON.\n\n'
+        f'Request: "{description}"\n'
+        f'All columns: {all_cols[:50]}\n'
+        f'Numeric columns: {num_cols[:30]}\n\n'
+        'Return ONLY this JSON — no explanation, no markdown:\n'
+        '{"chart_type":"bar|line|scatter|histogram|box|heatmap",'
+        '"x_col":"col_or_null","y_cols":["col"],'
+        '"color_col":"col_or_null","agg":"Sum|Mean|Count|Min|Max|None"}\n\n'
+        'Rules:\n'
+        '- chart_type must be one of: bar, line, scatter, histogram, box, heatmap\n'
+        '- y_cols must contain numeric column names only\n'
+        '- For "count" or "how many" requests set agg="Count"\n'
+        '- For distribution / histogram requests set chart_type="histogram"\n'
+        '- Only use column names from the provided lists; use null if unsure'
+    )
+    try:
+        r = requests.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            json={
+                "model": "llama-3.1-8b-instant",
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.1,
+                "max_tokens": 200,
+            },
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            timeout=15,
+        )
+        r.raise_for_status()
+        raw = r.json()["choices"][0]["message"]["content"].strip()
+        start = raw.find("{")
+        end   = raw.rfind("}") + 1
+        if start == -1 or end == 0:
+            return None
+        return json.loads(raw[start:end])
+    except Exception:
+        return None
+
 
 def _build_chart(df, x_col, y_cols, color_col, chart_type, agg_func):
     if not PLOTLY:
@@ -191,6 +244,55 @@ def render(df: pd.DataFrame, results: list):
             f"{n:,} rows loaded — charts use pre-aggregated data or a "
             f"{SCATTER_SAMPLE:,}-row sample for speed. Statistics use the full dataset."
         )
+
+    # ── NL chart builder ──────────────────────────────────────────────────────
+    with st.expander("✨ Ask a question about your data (AI)", expanded=False):
+        st.caption(
+            "Describe what you want to see and Groq will configure the chart for you. "
+            "Requires a Groq API key in ⚙️ Settings."
+        )
+        nl_chart = st.text_input(
+            "Chart request",
+            placeholder=(
+                "e.g. Show interview count by interviewer  ·  "
+                "Plot age distribution  ·  "
+                "Compare duration across interviewers"
+            ),
+            key="eda_nl_input",
+            label_visibility="collapsed",
+        )
+        if st.button("✨ Build chart", key="eda_nl_btn"):
+            if not nl_chart.strip():
+                st.warning("Enter a question first.")
+            else:
+                with st.spinner("Thinking…"):
+                    cfg = _nl_to_chart(nl_chart.strip(), all_cols, num_cols)
+                if cfg and cfg.get("chart_type") in CHART_TYPES.values():
+                    # Set widget state keys directly so they render with NL values
+                    label = _CHART_TYPE_REVERSE.get(cfg["chart_type"], "Bar chart")
+                    st.session_state["eda_chart_type"] = label
+                    x = cfg.get("x_col")
+                    if x and x in all_cols:
+                        st.session_state["eda_x"] = x
+                    y_vals = [c for c in (cfg.get("y_cols") or []) if c in num_cols]
+                    if y_vals:
+                        st.session_state["eda_y"] = y_vals
+                    clr = cfg.get("color_col")
+                    if clr and clr in all_cols:
+                        st.session_state["eda_color"] = clr
+                    agg = cfg.get("agg", "None")
+                    if agg in ["Sum", "Mean", "Count", "Min", "Max", "None"]:
+                        st.session_state["eda_agg"] = agg
+                    st.success(
+                        f"Chart configured: **{cfg['chart_type']}** · "
+                        f"X={x} · Y={y_vals} · Agg={agg}"
+                    )
+                    st.rerun()
+                else:
+                    st.error(
+                        "Could not build a chart from that description. "
+                        "Try being more specific about which columns and chart type you want."
+                    )
 
     # ── Chart builder ─────────────────────────────────────────────────────────
     st.markdown("#### Build a chart")

@@ -9,10 +9,90 @@ import json
 import requests
 import streamlit as st
 import pandas as pd
+from datetime import datetime
 from core.loader import DataLoader
 from core.cleaner import DataCleaner
 from core.rule_engine import RuleEngine
 from ui.settings import render_settings, init_settings
+
+
+def _nl_to_check_config(description: str, columns: list) -> dict | None:
+    """
+    Convert a plain-English QC check description to a typed config dict via Groq.
+    Returns one of: range / logic / duration / pattern (keyed by "type").
+    """
+    try:
+        from checks.verbatim_checks import _get_api_key
+        api_key = _get_api_key()
+    except Exception:
+        return None
+    if not api_key:
+        return None
+
+    prompt = (
+        f'Convert this survey QC rule to JSON.\n\n'
+        f'Description: "{description}"\n'
+        f'Available columns: {columns[:50]}\n\n'
+        'Return ONE of the following JSON formats — no explanation, no markdown:\n\n'
+        '1. Range rule (column must be within bounds):\n'
+        '   {"type":"range","column":"col","min":N,"max":N,"description":"..."}\n\n'
+        '2. Logic rule (IF condition THEN condition):\n'
+        '   {"type":"logic","description":"...","if_conditions":[{"column":"col","operator":"op","value":"val"}],"then_conditions":[{"column":"col","operator":"op"}]}\n\n'
+        '3. Duration check (interview length bounds):\n'
+        '   {"type":"duration","column":"col","min":N,"max":N}\n\n'
+        '4. Pattern rule (regex format check):\n'
+        '   {"type":"pattern","column":"col","pattern":"regex","description":"..."}\n\n'
+        'Logic operators: >, <, >=, <=, ==, !=, is_null, not_null, in_list, not_in_list\n'
+        'Omit "value" for is_null/not_null. Only use column names from the list above.\n'
+        'Return ONLY the JSON object.'
+    )
+    try:
+        r = requests.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            json={
+                "model": "llama-3.1-8b-instant",
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.1,
+                "max_tokens": 400,
+            },
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            timeout=15,
+        )
+        r.raise_for_status()
+        raw = r.json()["choices"][0]["message"]["content"].strip()
+        start = raw.find("{")
+        end   = raw.rfind("}") + 1
+        if start == -1 or end == 0:
+            return None
+        return json.loads(raw[start:end])
+    except Exception:
+        return None
+
+
+def _apply_nl_check(cfg: dict) -> tuple[bool, str]:
+    """Apply a parsed NL check config to session state. Returns (ok, message)."""
+    ctype = cfg.get("type")
+    if ctype == "range":
+        rule = {k: v for k, v in cfg.items() if k != "type"}
+        st.session_state.rules_config.setdefault("range_rules", []).append(rule)
+        return True, f"Range rule added: {cfg.get('description', cfg.get('column'))}"
+    elif ctype == "logic":
+        rule = {k: v for k, v in cfg.items() if k != "type"}
+        st.session_state.custom_logic_rules.append(rule)
+        return True, f"Logic rule added: {cfg.get('description', '')}"
+    elif ctype == "duration":
+        st.session_state.rules_config["interview_duration"] = {
+            "enabled": True,
+            "column":  cfg.get("column", "duration_minutes"),
+            "min_expected": cfg.get("min", 5),
+            "max_expected": cfg.get("max", 120),
+        }
+        return True, f"Duration check set: {cfg.get('column')} ({cfg.get('min')}–{cfg.get('max')} mins)"
+    elif ctype == "pattern":
+        rule = {k: v for k, v in cfg.items() if k != "type"}
+        st.session_state.rules_config.setdefault("pattern_rules", []).append(rule)
+        return True, f"Pattern rule added for: {cfg.get('column')}"
+    return False, f"Unknown check type: {ctype!r}"
 
 
 def _auto_detect_columns(df: pd.DataFrame) -> dict | None:
@@ -71,6 +151,8 @@ def init_state():
         "df_raw": None, "df_clean": None, "qc_results": None,
         "filename": None, "custom_logic_rules": [],
         "rules_config": _default_config(),
+        "column_aliases": {},
+        "_audit_log": [],
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -99,6 +181,10 @@ def _default_config() -> dict:
 
 def run_pipeline(df: pd.DataFrame, filename: str):
     df_clean = DataCleaner().clean(df)
+    # Apply column aliases before running checks
+    aliases = st.session_state.get("column_aliases", {})
+    if aliases:
+        df_clean = df_clean.rename(columns=aliases)
     cfg = dict(st.session_state.rules_config)
     cfg["logic_rules"] = cfg.get("logic_rules", []) + st.session_state.custom_logic_rules
     results = RuleEngine(config=cfg).run(df_clean)
@@ -106,6 +192,20 @@ def run_pipeline(df: pd.DataFrame, filename: str):
     st.session_state.df_clean   = df_clean
     st.session_state.qc_results = results
     st.session_state.filename   = filename
+    # Append audit log entry
+    entry = {
+        "timestamp":   datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "filename":    filename,
+        "rows":        len(df_clean),
+        "checks_run":  len(results),
+        "total_flags": sum(r.flag_count for r in results),
+        "critical":    sum(1 for r in results if r.severity == "critical" and r.flag_count > 0),
+        "warnings":    sum(1 for r in results if r.severity == "warning"  and r.flag_count > 0),
+        "aliases_applied": list(aliases.keys()) if aliases else [],
+        "flags_by_check":  {r.check_name: r.flag_count for r in results if r.flag_count > 0},
+        "config_snapshot": dict(st.session_state.rules_config),
+    }
+    st.session_state._audit_log = st.session_state.get("_audit_log", []) + [entry]
 
 
 def render_sidebar():
@@ -307,6 +407,102 @@ def render_sidebar():
             }
         else:
             st.session_state.rules_config["verbatim_check"] = {"enabled": False}
+
+        # ── AI QC Assistant ───────────────────────────────────────────────
+        if st.session_state.df_clean is not None:
+            st.divider()
+            with st.expander("✨ AI QC Assistant", expanded=False):
+                st.caption(
+                    "Describe any check in plain English — range, logic, duration, or pattern. "
+                    "Groq converts it to a rule automatically."
+                )
+                nl_desc = st.text_area(
+                    "Describe a check",
+                    placeholder=(
+                        "e.g. age should be between 18 and 99\n"
+                        "e.g. if consent is No then Q1 should be empty\n"
+                        "e.g. interviews should take 10–45 minutes\n"
+                        "e.g. phone must match format +1234567890"
+                    ),
+                    key="sb_nl_input",
+                    label_visibility="collapsed",
+                    height=90,
+                )
+                if st.button("✨ Convert & add", use_container_width=True, key="sb_nl_btn"):
+                    if not nl_desc.strip():
+                        st.warning("Enter a description first.")
+                    else:
+                        with st.spinner("Converting…"):
+                            cfg = _nl_to_check_config(
+                                nl_desc.strip(),
+                                st.session_state.df_clean.columns.tolist(),
+                            )
+                        if cfg and cfg.get("type"):
+                            ok, msg = _apply_nl_check(cfg)
+                            if ok:
+                                st.success(msg)
+                                st.caption("Click ↺ Rerun QC to apply.")
+                            else:
+                                st.error(msg)
+                        else:
+                            st.error(
+                                "Could not parse a check from that description. "
+                                "Try being more specific. (Groq API key required — ⚙️ Settings)"
+                            )
+
+        # ── Batch QC ──────────────────────────────────────────────────────
+        if st.session_state.df_clean is not None:
+            with st.expander("📁 Batch QC", expanded=False):
+                st.caption(
+                    "Upload multiple files to QC them all at once using current settings. "
+                    "Results appear in the Batch tab."
+                )
+                batch_files = st.file_uploader(
+                    "Batch files",
+                    type=["csv", "xlsx", "xls"],
+                    accept_multiple_files=True,
+                    label_visibility="collapsed",
+                    key="sb_batch_uploader",
+                )
+                if batch_files:
+                    if st.button("▶ Run batch QC", use_container_width=True,
+                                 type="primary", key="sb_batch_run"):
+                        cfg_b = dict(st.session_state.rules_config)
+                        cfg_b["logic_rules"] = (
+                            cfg_b.get("logic_rules", []) +
+                            st.session_state.get("custom_logic_rules", [])
+                        )
+                        aliases = st.session_state.get("column_aliases", {})
+                        batch_results = []
+                        errors = []
+                        prog = st.progress(0.0, text="Starting…")
+                        for i, f in enumerate(batch_files):
+                            prog.progress(i / len(batch_files), text=f"Processing {f.name}…")
+                            try:
+                                df_r = DataLoader().load_from_buffer(f)
+                                df_c = DataCleaner().clean(df_r)
+                                if aliases:
+                                    df_c = df_c.rename(columns=aliases)
+                                res = RuleEngine(config=cfg_b).run(df_c)
+                                total = sum(r.flag_count for r in res)
+                                crits = sum(1 for r in res if r.severity == "critical" and r.flag_count > 0)
+                                warns = sum(1 for r in res if r.severity == "warning"  and r.flag_count > 0)
+                                batch_results.append({
+                                    "filename": f.name, "rows": len(df_c),
+                                    "columns": len(df_c.columns), "checks_run": len(res),
+                                    "total_flags": total, "flag_rate_pct": round(total / max(len(df_c), 1) * 100, 1),
+                                    "critical": crits, "warnings": warns,
+                                    "status": "🔴 Issues" if crits > 0 else ("🟡 Warnings" if warns > 0 else "✅ Clean"),
+                                    "_df": df_c, "_results": res,
+                                })
+                            except Exception as e:
+                                errors.append(f"{f.name}: {e}")
+                        prog.progress(1.0, text=f"Done — {len(batch_results)} file(s)")
+                        st.session_state["_batch_results"] = batch_results
+                        for err in errors:
+                            st.error(err)
+                        if batch_results:
+                            st.success(f"Batch complete — see Batch tab for results.")
 
         # ── Rerun ─────────────────────────────────────────────────────────
         if st.session_state.df_clean is not None:

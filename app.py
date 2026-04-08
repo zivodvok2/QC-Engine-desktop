@@ -20,7 +20,8 @@ from ui.sidebar import render_sidebar, init_state
 from ui.settings import get_theme_css, init_settings
 from ui.onboarding import render_onboarding
 from ui.tabs import (qc_tab, eda_tab, logic_tab, straightlining_tab,
-                     data_tab, verbatim_tab, interviewer_tab, compare_tab)
+                     data_tab, verbatim_tab, interviewer_tab, compare_tab,
+                     batch_tab)
 
 PROFILES_DIR = Path(__file__).parent / "profiles"
 
@@ -244,9 +245,9 @@ with h3:
 st.divider()
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
-tab_qc, tab_logic, tab_sl, tab_verb, tab_int, tab_eda, tab_data, tab_cmp, tab_cfg = st.tabs([
+tab_qc, tab_logic, tab_sl, tab_verb, tab_int, tab_eda, tab_data, tab_cmp, tab_batch, tab_log, tab_cfg = st.tabs([
     "QC Report", "Logic", "Straightlining", "Verbatim",
-    "Interviewers", "EDA", "Data", "Compare", "Config",
+    "Interviewers", "EDA", "Data", "Compare", "Batch", "Log", "Config",
 ])
 
 with tab_qc:
@@ -273,6 +274,57 @@ with tab_data:
 with tab_cmp:
     compare_tab.render(df)
 
+with tab_batch:
+    batch_tab.render(df, results)
+
+with tab_log:
+    st.markdown("#### Audit Trail")
+    st.caption(
+        "Timestamped record of every QC run this session — file, config, flags raised. "
+        "Export for client accountability or project documentation."
+    )
+    audit_log = st.session_state.get("_audit_log", [])
+    if not audit_log:
+        st.info("No runs logged yet. Upload a file and run QC to start the audit trail.")
+    else:
+        summary_rows = [{
+            "Timestamp":   e["timestamp"],
+            "File":        e["filename"],
+            "Rows":        e["rows"],
+            "Checks Run":  e["checks_run"],
+            "Total Flags": e["total_flags"],
+            "Critical":    e["critical"],
+            "Warnings":    e["warnings"],
+            "Aliases Used": ", ".join(e.get("aliases_applied", [])) or "—",
+        } for e in audit_log]
+        st.dataframe(pd.DataFrame(summary_rows), use_container_width=True, hide_index=True)
+
+        log_buf = io.BytesIO(
+            pd.DataFrame(summary_rows).to_csv(index=False).encode()
+        )
+        st.download_button(
+            "↓ Export audit log (CSV)",
+            data=log_buf,
+            file_name=f"QC_AuditLog_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+            mime="text/csv",
+        )
+
+        # Most recent run detail
+        latest = audit_log[-1]
+        with st.expander("Most recent run — check detail"):
+            if latest["flags_by_check"]:
+                check_rows = [{"Check": k, "Flags": v} for k, v in latest["flags_by_check"].items()]
+                st.dataframe(pd.DataFrame(check_rows), use_container_width=True, hide_index=True)
+            else:
+                st.caption("No flags raised in the most recent run.")
+            if latest.get("aliases_applied"):
+                st.caption(f"Aliases applied: {', '.join(latest['aliases_applied'])}")
+            st.json(latest["config_snapshot"], expanded=False)
+
+        if st.button("Clear audit log", type="secondary", key="clear_audit_log"):
+            st.session_state._audit_log = []
+            st.rerun()
+
 with tab_cfg:
     st.markdown("#### Config Profiles")
     st.markdown(
@@ -297,6 +349,7 @@ with tab_cfg:
                 payload = {
                     "rules_config": st.session_state.rules_config,
                     "custom_logic_rules": st.session_state.custom_logic_rules,
+                    "column_aliases": st.session_state.get("column_aliases", {}),
                 }
                 path.write_text(json.dumps(payload, indent=2))
                 st.success(f"Saved: {path.name}")
@@ -314,8 +367,45 @@ with tab_cfg:
                 data = json.loads(profile_opts[selected_profile].read_text())
                 st.session_state.rules_config = data.get("rules_config", st.session_state.rules_config)
                 st.session_state.custom_logic_rules = data.get("custom_logic_rules", [])
+                st.session_state.column_aliases = data.get("column_aliases", {})
                 st.success(f"Profile '{selected_profile}' loaded — click ↺ Rerun QC to apply.")
                 st.rerun()
+
+    st.divider()
+    st.markdown("#### Column Aliases")
+    st.caption(
+        "Map your column names to standard names before QC runs. "
+        "e.g. 'INT_CODE' → 'interviewer_id'. Aliases are saved with profiles."
+    )
+
+    aliases = st.session_state.get("column_aliases", {})
+
+    # Show existing aliases with inline ✕ delete buttons
+    to_delete = []
+    for orig, target in list(aliases.items()):
+        a1, a2, a3 = st.columns([5, 5, 1])
+        a1.caption(orig)
+        a2.caption(f"→ {target}")
+        if a3.button("✕", key=f"del_alias_{orig}", help="Remove alias"):
+            to_delete.append(orig)
+    for k in to_delete:
+        del st.session_state.column_aliases[k]
+    if to_delete:
+        st.rerun()
+
+    if not aliases:
+        st.caption("No aliases defined yet.")
+
+    # Add new alias
+    ac1, ac2 = st.columns(2)
+    from_col = ac1.text_input("Your column",   placeholder="INT_CODE",       key="alias_from")
+    to_col   = ac2.text_input("Standard name", placeholder="interviewer_id", key="alias_to")
+    if st.button("Add alias", use_container_width=False, key="alias_add_btn"):
+        if from_col.strip() and to_col.strip():
+            st.session_state.column_aliases[from_col.strip()] = to_col.strip()
+            st.rerun()
+        else:
+            st.warning("Enter both the original column name and the standard name.")
 
     st.divider()
     st.markdown("#### Active Config")
