@@ -5,6 +5,8 @@ Handles file upload, basic QC settings, logic rule builder,
 advanced check toggles, and settings panel.
 """
 
+import io
+import hashlib
 import json
 import requests
 import streamlit as st
@@ -14,6 +16,15 @@ from core.loader import DataLoader
 from core.cleaner import DataCleaner
 from core.rule_engine import RuleEngine
 from ui.settings import render_settings, init_settings
+
+
+@st.cache_data(show_spinner=False, max_entries=10)
+def _cached_load_clean(file_bytes: bytes, filename: str) -> pd.DataFrame:
+    """Load and clean a file — cached by content so rerenders never re-process."""
+    buf = io.BytesIO(file_bytes)
+    buf.name = filename
+    df = DataLoader().load_from_buffer(buf)
+    return DataCleaner().clean(df)
 
 
 def _nl_to_check_config(description: str, columns: list) -> dict | None:
@@ -179,6 +190,13 @@ def _default_config() -> dict:
     }
 
 
+@st.cache_data(show_spinner=False, max_entries=10)
+def _cached_run_checks(df_clean: pd.DataFrame, cfg_json: str) -> list:
+    """Run QC checks — cached by (cleaned dataframe, config) so Rerun QC is instant when nothing changed."""
+    cfg = json.loads(cfg_json)
+    return RuleEngine(config=cfg).run(df_clean)
+
+
 def run_pipeline(df: pd.DataFrame, filename: str):
     df_clean = DataCleaner().clean(df)
     # Apply column aliases before running checks
@@ -187,7 +205,7 @@ def run_pipeline(df: pd.DataFrame, filename: str):
         df_clean = df_clean.rename(columns=aliases)
     cfg = dict(st.session_state.rules_config)
     cfg["logic_rules"] = cfg.get("logic_rules", []) + st.session_state.custom_logic_rules
-    results = RuleEngine(config=cfg).run(df_clean)
+    results = _cached_run_checks(df_clean, json.dumps(cfg, default=str))
     st.session_state.df_raw     = df
     st.session_state.df_clean   = df_clean
     st.session_state.qc_results = results
@@ -247,13 +265,37 @@ def render_sidebar():
             label_visibility="collapsed",
         )
         if uploaded:
-            with st.spinner("Loading..."):
-                try:
-                    df = DataLoader().load_from_buffer(uploaded)
-                    run_pipeline(df, uploaded.name)
-                    st.success(f"✓ {len(df):,} rows loaded")
-                except Exception as e:
-                    st.error(f"Error: {e}")
+            file_hash = hashlib.md5(uploaded.getvalue()).hexdigest()
+            if st.session_state.get("_last_file_hash") != file_hash:
+                with st.spinner("Loading..."):
+                    try:
+                        df_clean = _cached_load_clean(uploaded.getvalue(), uploaded.name)
+                        aliases  = st.session_state.get("column_aliases", {})
+                        if aliases:
+                            df_clean = df_clean.rename(columns=aliases)
+                        cfg = dict(st.session_state.rules_config)
+                        cfg["logic_rules"] = cfg.get("logic_rules", []) + st.session_state.get("custom_logic_rules", [])
+                        results = _cached_run_checks(df_clean, json.dumps(cfg, default=str))
+                        st.session_state.df_raw     = df_clean   # no raw needed post-clean cache
+                        st.session_state.df_clean   = df_clean
+                        st.session_state.qc_results = results
+                        st.session_state.filename   = uploaded.name
+                        st.session_state["_last_file_hash"] = file_hash
+                        entry = {
+                            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            "filename": uploaded.name, "rows": len(df_clean),
+                            "checks_run": len(results),
+                            "total_flags": sum(r.flag_count for r in results),
+                            "critical": sum(1 for r in results if r.severity == "critical" and r.flag_count > 0),
+                            "warnings": sum(1 for r in results if r.severity == "warning"  and r.flag_count > 0),
+                            "aliases_applied": list(aliases.keys()) if aliases else [],
+                            "flags_by_check": {r.check_name: r.flag_count for r in results if r.flag_count > 0},
+                            "config_snapshot": dict(st.session_state.rules_config),
+                        }
+                        st.session_state._audit_log = st.session_state.get("_audit_log", []) + [entry]
+                        st.success(f"✓ {len(df_clean):,} rows loaded")
+                    except Exception as e:
+                        st.error(f"Error: {e}")
 
         # Auto-detect columns
         if st.session_state.df_clean is not None:
