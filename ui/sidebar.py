@@ -256,7 +256,8 @@ def render_sidebar():
         # ── Upload ────────────────────────────────────────────────────────
         st.markdown(
             "<div style='font-size:10px;letter-spacing:0.1em;text-transform:uppercase;"
-            "color:var(--ds-text2);margin-bottom:6px;'>Data</div>",
+            "color:var(--ds-text2);margin-bottom:6px;font-weight:600;'>"
+            "Data Source</div>",
             unsafe_allow_html=True,
         )
         uploaded = st.file_uploader(
@@ -297,39 +298,44 @@ def render_sidebar():
                     except Exception as e:
                         st.error(f"Error: {e}")
 
+        if st.session_state.df_clean is not None:
+            df = st.session_state.df_clean
+            st.markdown(
+                f'<div style="font-size:11px;color:var(--ds-text2);margin-top:4px;'
+                f'padding:6px 8px;background:var(--ds-surface2);border-radius:6px;'
+                f'border:1px solid var(--ds-border);">'
+                f'<strong style="color:var(--ds-text);">{st.session_state.filename}</strong>'
+                f'<br>{len(df):,} rows &nbsp;·&nbsp; {len(df.columns)} columns</div>',
+                unsafe_allow_html=True,
+            )
+
         # Auto-detect columns
         if st.session_state.df_clean is not None:
-            if st.button("🔍 Auto-detect columns", use_container_width=True,
+            if st.button("✦ Auto-detect columns", use_container_width=True,
                          help="Use Groq AI to suggest interviewer, duration, ID, and verbatim columns"):
                 with st.spinner("Detecting column types…"):
                     suggestions = _auto_detect_columns(st.session_state.df_clean)
                 if suggestions:
                     st.session_state["_auto_detect"] = suggestions
-                    st.success("Columns detected — applied below")
+                    st.success("Columns detected")
                     st.rerun()
                 else:
-                    st.warning("Could not detect — check Groq API key in ⚙️ Settings")
+                    st.warning("Could not detect — add a Groq API key in ⚙ Settings")
 
             if st.session_state.get("_auto_detect"):
                 det = st.session_state["_auto_detect"]
                 if any(v for v in det.values()):
-                    with st.expander("🔍 Detected columns", expanded=False):
+                    with st.expander("Detected columns", expanded=False):
                         for k, v in det.items():
                             if v:
                                 st.caption(f"{k}: **{v}**")
-
-        if st.session_state.df_clean is not None:
-            df = st.session_state.df_clean
-            st.caption(
-                f"{len(df):,} rows · {len(df.columns)} cols · {st.session_state.filename}"
-            )
 
         st.divider()
 
         # ── Basic QC settings ─────────────────────────────────────────────
         st.markdown(
             "<div style='font-size:10px;letter-spacing:0.1em;text-transform:uppercase;"
-            "color:var(--ds-text2);margin-bottom:6px;'>QC Settings</div>",
+            "color:var(--ds-text2);margin-bottom:6px;font-weight:600;'>QC Settings</div>",
             unsafe_allow_html=True,
         )
 
@@ -345,8 +351,9 @@ def render_sidebar():
             value=_det.get("duration_column", "") or "duration_minutes",
             help="Column holding interview duration in minutes",
         )
-        min_dur = st.number_input("Min duration (mins)", value=5,   min_value=0)
-        max_dur = st.number_input("Max duration (mins)", value=120, min_value=1)
+        dc1, dc2 = st.columns(2)
+        min_dur = dc1.number_input("Min (mins)", value=5,   min_value=0)
+        max_dur = dc2.number_input("Max (mins)", value=120, min_value=1)
         st.session_state.rules_config["interview_duration"] = {
             "enabled": bool(dur_col), "column": dur_col,
             "min_expected": min_dur, "max_expected": max_dur,
@@ -357,7 +364,7 @@ def render_sidebar():
         # ── Interviewer checks ────────────────────────────────────────────
         st.markdown(
             "<div style='font-size:10px;letter-spacing:0.1em;text-transform:uppercase;"
-            "color:var(--ds-text2);margin-bottom:6px;'>Interviewer Checks</div>",
+            "color:var(--ds-text2);margin-bottom:6px;font-weight:600;'>Interviewers</div>",
             unsafe_allow_html=True,
         )
         int_col = st.text_input(
@@ -384,71 +391,102 @@ def render_sidebar():
 
         st.divider()
 
-        # ── Consent / eligibility ─────────────────────────────────────────
-        ce_on = st.toggle("Consent / eligibility check", value=False,
-                          help="Flag disqualified respondents who still have data")
-        if ce_on:
-            sc_col  = st.text_input("Screener column", placeholder="consent")
-            dq_op   = st.selectbox("Disqualify if", ["!=","==","<",">","<=",">="])
-            dq_val  = st.text_input("Value", placeholder="Yes")
-            sub_raw = st.text_input("Subsequent columns", placeholder="Q1, Q2, Q3",
-                                    help="Columns that should be empty for disqualified respondents")
-            st.session_state.rules_config["consent_eligibility_check"] = {
-                "enabled": bool(sc_col and dq_val),
-                "screener_column": sc_col, "disqualify_operator": dq_op,
-                "disqualify_value": dq_val,
-                "subsequent_columns": [c.strip() for c in sub_raw.split(",") if c.strip()],
-            }
-        else:
-            st.session_state.rules_config["consent_eligibility_check"] = {
-                "enabled": False, "screener_column": "", "disqualify_operator": "!=",
-                "disqualify_value": "", "subsequent_columns": [],
-            }
+        # ── Advanced checks (collapsed by default) ────────────────────────
+        with st.expander("Advanced Checks", expanded=False):
 
-        st.divider()
+            # ── Consent / eligibility ─────────────────────────────────────
+            st.markdown(
+                "<div style='font-size:10px;letter-spacing:0.08em;text-transform:uppercase;"
+                "color:var(--ds-text2);margin-bottom:4px;font-weight:600;'>"
+                "Consent / Eligibility</div>",
+                unsafe_allow_html=True,
+            )
+            ce_on = st.toggle("Enable consent check", value=False,
+                              help="Flag disqualified respondents who still have data",
+                              key="adv_ce_on")
+            if ce_on:
+                sc_col  = st.text_input("Screener column", placeholder="consent", key="adv_sc_col")
+                dq_op   = st.selectbox("Disqualify if", ["!=","==","<",">","<=",">="], key="adv_dq_op")
+                dq_val  = st.text_input("Value", placeholder="Yes", key="adv_dq_val")
+                sub_raw = st.text_input("Subsequent columns", placeholder="Q1, Q2, Q3",
+                                        help="Columns that should be empty for disqualified respondents",
+                                        key="adv_sub_raw")
+                st.session_state.rules_config["consent_eligibility_check"] = {
+                    "enabled": bool(sc_col and dq_val),
+                    "screener_column": sc_col, "disqualify_operator": dq_op,
+                    "disqualify_value": dq_val,
+                    "subsequent_columns": [c.strip() for c in sub_raw.split(",") if c.strip()],
+                }
+            else:
+                st.session_state.rules_config["consent_eligibility_check"] = {
+                    "enabled": False, "screener_column": "", "disqualify_operator": "!=",
+                    "disqualify_value": "", "subsequent_columns": [],
+                }
 
-        # ── Fabrication ───────────────────────────────────────────────────
-        fab_on = st.toggle("Fabrication detection", value=False,
-                           help="Detect sequential IDs and low-variance numeric responses")
-        if fab_on:
-            fab_id  = st.text_input("Respondent ID column", placeholder="respondent_id")
-            fab_num = st.text_input("Numeric columns (comma-sep)",
-                                    placeholder="Q1, Q2, Q3",
-                                    help="Check these for suspiciously low variance per interviewer")
-            fab_vt  = st.slider("Variance threshold", 0.01, 0.5, 0.1, 0.01)
-            fab_rl  = st.number_input("Sequential run length", value=5, min_value=2)
-            st.session_state.rules_config["fabrication_check"] = {
-                "enabled": True,
-                "id_column": fab_id or None,
-                "numeric_columns": [c.strip() for c in fab_num.split(",") if c.strip()],
-                "interviewer_column": int_col or None,
-                "variance_threshold": fab_vt,
-                "sequence_run_length": int(fab_rl),
-            }
-        else:
-            st.session_state.rules_config["fabrication_check"] = {"enabled": False}
+            st.markdown("<hr style='border-color:var(--ds-border);margin:10px 0;'>",
+                        unsafe_allow_html=True)
 
-        st.divider()
+            # ── Fabrication ───────────────────────────────────────────────
+            st.markdown(
+                "<div style='font-size:10px;letter-spacing:0.08em;text-transform:uppercase;"
+                "color:var(--ds-text2);margin-bottom:4px;font-weight:600;'>"
+                "Fabrication Detection</div>",
+                unsafe_allow_html=True,
+            )
+            fab_on = st.toggle("Enable fabrication check", value=False,
+                               help="Detect sequential IDs and low-variance numeric responses",
+                               key="adv_fab_on")
+            if fab_on:
+                fab_id  = st.text_input("Respondent ID column", placeholder="respondent_id", key="adv_fab_id")
+                fab_num = st.text_input("Numeric columns (comma-sep)",
+                                        placeholder="Q1, Q2, Q3",
+                                        help="Check these for suspiciously low variance per interviewer",
+                                        key="adv_fab_num")
+                fab_vt  = st.slider("Variance threshold", 0.01, 0.5, 0.1, 0.01, key="adv_fab_vt")
+                fab_rl  = st.number_input("Sequential run length", value=5, min_value=2, key="adv_fab_rl")
+                st.session_state.rules_config["fabrication_check"] = {
+                    "enabled": True,
+                    "id_column": fab_id or None,
+                    "numeric_columns": [c.strip() for c in fab_num.split(",") if c.strip()],
+                    "interviewer_column": int_col or None,
+                    "variance_threshold": fab_vt,
+                    "sequence_run_length": int(fab_rl),
+                }
+            else:
+                st.session_state.rules_config["fabrication_check"] = {"enabled": False}
 
-        # ── Verbatim ──────────────────────────────────────────────────────
-        verb_on = st.toggle("Verbatim quality check", value=False,
-                            help="Use local Ollama LLM to check grammar, coherence, and relevance")
-        if verb_on:
-            vb_cols_raw = st.text_input("Verbatim columns (comma-sep)",
-                                        placeholder="Q10_text, comments")
-            vb_sample   = st.number_input("Sample size", value=50, min_value=5, max_value=500,
-                                          help="Number of responses to evaluate (for speed)")
-            vb_min_score = st.slider("Min quality score (1–5)", 1, 5, 2,
-                                     help="Flag responses scoring below this on any dimension")
-            st.session_state.rules_config["verbatim_check"] = {
-                "enabled": True,
-                "verbatim_columns": [c.strip() for c in vb_cols_raw.split(",") if c.strip()],
-                "model": st.session_state.get("ds_ollama_model", "llama3"),
-                "min_score": vb_min_score,
-                "sample_size": int(vb_sample),
-            }
-        else:
-            st.session_state.rules_config["verbatim_check"] = {"enabled": False}
+            st.markdown("<hr style='border-color:var(--ds-border);margin:10px 0;'>",
+                        unsafe_allow_html=True)
+
+            # ── Verbatim ──────────────────────────────────────────────────
+            st.markdown(
+                "<div style='font-size:10px;letter-spacing:0.08em;text-transform:uppercase;"
+                "color:var(--ds-text2);margin-bottom:4px;font-weight:600;'>"
+                "Verbatim Quality</div>",
+                unsafe_allow_html=True,
+            )
+            verb_on = st.toggle("Enable verbatim check", value=False,
+                                help="Use Groq LLM to check grammar, coherence, and relevance",
+                                key="adv_verb_on")
+            if verb_on:
+                vb_cols_raw = st.text_input("Verbatim columns (comma-sep)",
+                                            placeholder="Q10_text, comments",
+                                            key="adv_vb_cols")
+                vb_sample   = st.number_input("Sample size", value=50, min_value=5, max_value=500,
+                                              help="Number of responses to evaluate (for speed)",
+                                              key="adv_vb_sample")
+                vb_min_score = st.slider("Min quality score (1–5)", 1, 5, 2,
+                                         help="Flag responses scoring below this on any dimension",
+                                         key="adv_vb_score")
+                st.session_state.rules_config["verbatim_check"] = {
+                    "enabled": True,
+                    "verbatim_columns": [c.strip() for c in vb_cols_raw.split(",") if c.strip()],
+                    "model": st.session_state.get("ds_ollama_model", "llama3"),
+                    "min_score": vb_min_score,
+                    "sample_size": int(vb_sample),
+                }
+            else:
+                st.session_state.rules_config["verbatim_check"] = {"enabled": False}
 
         # ── AI QC Assistant ───────────────────────────────────────────────
         if st.session_state.df_clean is not None:
@@ -497,7 +535,7 @@ def render_sidebar():
             with st.expander("📁 Batch QC", expanded=False):
                 st.caption(
                     "Upload multiple files to QC them all at once using current settings. "
-                    "Results appear in the Batch tab."
+                    "Click 📁 Batch in the toolbar to view results."
                 )
                 batch_files = st.file_uploader(
                     "Batch files",
@@ -544,15 +582,121 @@ def render_sidebar():
                         for err in errors:
                             st.error(err)
                         if batch_results:
-                            st.success(f"Batch complete — see Batch tab for results.")
+                            st.success("Batch complete — click 📁 Batch in the toolbar to view results.")
+
+        # ── Config profiles ───────────────────────────────────────────────
+        if st.session_state.df_clean is not None:
+            from pathlib import Path
+            import json as _json
+            _PROFILES_DIR = Path(__file__).parent.parent / "profiles"
+            _PROFILES_DIR.mkdir(exist_ok=True)
+
+            with st.expander("Config & Profiles", expanded=False):
+                st.caption("Save and reload rule configurations across waves.")
+
+                _saved = sorted(_PROFILES_DIR.glob("*.json"))
+                _p1, _p2 = st.columns([3, 1])
+                _pname = _p1.text_input("Profile name", placeholder="Wave 1 Kenya",
+                                        key="sb_cfg_pname", label_visibility="collapsed")
+                with _p2:
+                    st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
+                    if st.button("Save", key="sb_cfg_save", use_container_width=True,
+                                 type="primary"):
+                        if _pname.strip():
+                            _safe = "".join(c if c.isalnum() or c in " _-" else "_"
+                                            for c in _pname.strip())
+                            _path = _PROFILES_DIR / f"{_safe}.json"
+                            _path.write_text(_json.dumps({
+                                "rules_config":       st.session_state.rules_config,
+                                "custom_logic_rules": st.session_state.custom_logic_rules,
+                                "column_aliases":     st.session_state.get("column_aliases", {}),
+                            }, indent=2))
+                            st.success(f"Saved: {_safe}")
+                            st.rerun()
+                        else:
+                            st.warning("Enter a profile name.")
+
+                if _saved:
+                    _opts = {p.stem: p for p in _saved}
+                    _sel = st.selectbox("Load profile",
+                                        ["— select —"] + list(_opts.keys()),
+                                        key="sb_cfg_load_sel",
+                                        label_visibility="collapsed")
+                    if st.button("Load", key="sb_cfg_load_btn",
+                                 use_container_width=True):
+                        if _sel != "— select —":
+                            _data = _json.loads(_opts[_sel].read_text())
+                            st.session_state.rules_config       = _data.get("rules_config",       st.session_state.rules_config)
+                            st.session_state.custom_logic_rules = _data.get("custom_logic_rules", [])
+                            st.session_state.column_aliases     = _data.get("column_aliases",     {})
+                            st.success(f"'{_sel}' loaded — click ↺ Rerun QC to apply.")
+                            st.rerun()
+
+                st.markdown("<hr style='border-color:var(--ds-border);margin:8px 0;'>",
+                            unsafe_allow_html=True)
+                st.caption("Column Aliases — map your column names to standard names.")
+                _aliases = st.session_state.get("column_aliases", {})
+                _to_del = []
+                for _orig, _tgt in list(_aliases.items()):
+                    _ca1, _ca2, _ca3 = st.columns([4, 4, 1])
+                    _ca1.markdown(f"`{_orig}`")
+                    _ca2.markdown(f"→ `{_tgt}`")
+                    if _ca3.button("✕", key=f"sb_del_alias_{_orig}"):
+                        _to_del.append(_orig)
+                for _k in _to_del:
+                    del st.session_state.column_aliases[_k]
+                if _to_del:
+                    st.rerun()
+                if not _aliases:
+                    st.caption("No aliases yet.")
+                _af, _at = st.columns(2)
+                _from = _af.text_input("From", placeholder="INT_CODE", key="sb_alias_from",
+                                       label_visibility="collapsed")
+                _to   = _at.text_input("To",   placeholder="interviewer_id", key="sb_alias_to",
+                                       label_visibility="collapsed")
+                if st.button("Add alias", key="sb_alias_add", use_container_width=True):
+                    if _from.strip() and _to.strip():
+                        st.session_state.column_aliases[_from.strip()] = _to.strip()
+                        st.rerun()
+                    else:
+                        st.warning("Enter both column names.")
+
+        # ── Audit log ─────────────────────────────────────────────────────
+        if st.session_state.df_clean is not None:
+            import io as _io
+            _audit = st.session_state.get("_audit_log", [])
+            _label = f"Audit Log ({len(_audit)} run{'s' if len(_audit) != 1 else ''})"
+            with st.expander(_label, expanded=False):
+                if not _audit:
+                    st.caption("No runs yet — upload and run QC to start the trail.")
+                else:
+                    _rows = [{
+                        "Time":     e["timestamp"],
+                        "File":     e["filename"],
+                        "Rows":     e["rows"],
+                        "Checks":   e["checks_run"],
+                        "Flags":    e["total_flags"],
+                        "Critical": e["critical"],
+                    } for e in _audit]
+                    st.dataframe(_rows, use_container_width=True, hide_index=True)
+                    import pandas as _pd
+                    _buf = _io.BytesIO(_pd.DataFrame(_rows).to_csv(index=False).encode())
+                    st.download_button("↓ Export CSV", data=_buf,
+                                       file_name="QC_AuditLog.csv", mime="text/csv",
+                                       use_container_width=True)
+                    if st.button("Clear log", type="secondary", key="sb_clear_audit",
+                                 use_container_width=True):
+                        st.session_state._audit_log = []
+                        st.rerun()
 
         # ── Rerun ─────────────────────────────────────────────────────────
         if st.session_state.df_clean is not None:
             st.divider()
-            if st.button("↺ Rerun QC", use_container_width=True, type="primary"):
-                with st.spinner("Running..."):
+            if st.button("↺  Rerun QC", use_container_width=True, type="primary",
+                         help="Re-run all checks with current settings"):
+                with st.spinner("Running checks…"):
                     run_pipeline(st.session_state.df_raw, st.session_state.filename)
-                st.success("Done")
+                st.success("Done — results updated")
 
         # ── Settings panel ────────────────────────────────────────────────
         render_settings()

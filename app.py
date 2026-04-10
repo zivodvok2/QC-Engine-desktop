@@ -52,11 +52,15 @@ st.markdown(
     """
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=DM+Mono:wght@300;400;500&display=swap');
+
+    /* ── Base typography ──────────────────────────────────────────────── */
     html, body, [class*="css"]      { font-family: 'DM Mono', monospace; }
     h1, h2, h3, h4                  { font-family: 'Syne', sans-serif !important; }
+
+    /* ── Metric cards ─────────────────────────────────────────────────── */
     [data-testid="metric-container"] {
         background: var(--ds-surface); border: 1px solid var(--ds-border);
-        border-radius: 6px; padding: 12px 16px;
+        border-radius: 8px; padding: 14px 18px;
     }
     [data-testid="metric-container"] label {
         font-size: 10px !important; letter-spacing: 0.1em;
@@ -66,18 +70,112 @@ st.markdown(
         font-family: 'Syne', sans-serif !important; font-weight: 800 !important;
         font-size: 2rem !important; color: var(--ds-text) !important;
     }
+
+    /* ── Sidebar ──────────────────────────────────────────────────────── */
     section[data-testid="stSidebar"] {
         background: var(--ds-surface); border-right: 1px solid var(--ds-border);
     }
-    button[data-baseweb="tab"] {
-        font-family: 'DM Mono', monospace !important; font-size: 11px !important;
-        letter-spacing: 0.08em; text-transform: uppercase;
+
+    /* ── DataFrames ───────────────────────────────────────────────────── */
+    [data-testid="stDataFrame"]     { border: 1px solid var(--ds-border); border-radius: 8px; }
+
+    /* ── Expanders ────────────────────────────────────────────────────── */
+    div[data-testid="stExpander"]   { border: 1px solid var(--ds-border) !important;
+                                      border-radius: 8px !important; }
+
+    /* ── Button system ────────────────────────────────────────────────── */
+    /* Base for all buttons */
+    .stButton > button,
+    [data-testid="stDownloadButton"] > button {
+        font-family: 'DM Mono', monospace !important;
+        font-size: 11px !important;
+        letter-spacing: 0.06em !important;
+        border-radius: 6px !important;
+        height: 36px !important;
+        padding: 0 14px !important;
+        transition: all 0.15s ease !important;
+        cursor: pointer !important;
     }
-    [data-testid="stDataFrame"]   { border: 1px solid var(--ds-border); border-radius: 6px; }
-    .stButton > button            { font-family: 'DM Mono', monospace !important;
-                                    font-size: 11px !important; border-radius: 6px !important; }
-    div[data-testid="stExpander"] { border: 1px solid var(--ds-border) !important;
-                                    border-radius: 6px !important; }
+
+    /* Primary buttons — accent fill */
+    [data-testid="baseButton-primary"] {
+        background-color: var(--ds-accent) !important;
+        color: #0b0c0f !important;
+        border: none !important;
+        font-weight: 600 !important;
+        box-shadow: 0 2px 10px rgba(74,240,160,0.18) !important;
+    }
+    [data-testid="baseButton-primary"]:hover {
+        opacity: 0.88 !important;
+        box-shadow: 0 4px 16px rgba(74,240,160,0.28) !important;
+        transform: translateY(-1px) !important;
+    }
+    [data-testid="baseButton-primary"]:active {
+        transform: translateY(0px) !important;
+        opacity: 1 !important;
+    }
+
+    /* Secondary buttons — ghost/outlined */
+    [data-testid="baseButton-secondary"] {
+        background-color: transparent !important;
+        color: var(--ds-text) !important;
+        border: 1px solid var(--ds-border) !important;
+        font-weight: 400 !important;
+    }
+    [data-testid="baseButton-secondary"]:hover {
+        border-color: var(--ds-text2) !important;
+        background-color: var(--ds-surface) !important;
+        color: var(--ds-text) !important;
+    }
+
+    /* Download buttons — outlined with accent hover */
+    [data-testid="stDownloadButton"] > button {
+        background-color: var(--ds-surface) !important;
+        color: var(--ds-text) !important;
+        border: 1px solid var(--ds-border) !important;
+        font-weight: 500 !important;
+    }
+    [data-testid="stDownloadButton"] > button:hover {
+        border-color: var(--ds-accent) !important;
+        color: var(--ds-accent) !important;
+        background-color: rgba(74,240,160,0.06) !important;
+    }
+
+    /* Primary download buttons */
+    [data-testid="stDownloadButton"] > button[kind="primary"] {
+        background-color: var(--ds-accent) !important;
+        color: #0b0c0f !important;
+        border: none !important;
+        font-weight: 600 !important;
+        box-shadow: 0 2px 10px rgba(74,240,160,0.18) !important;
+    }
+    [data-testid="stDownloadButton"] > button[kind="primary"]:hover {
+        opacity: 0.88 !important;
+        box-shadow: 0 4px 16px rgba(74,240,160,0.28) !important;
+    }
+
+    /* ── Tab bar ──────────────────────────────────────────────────────── */
+    button[data-baseweb="tab"] {
+        font-family: 'DM Mono', monospace !important;
+        font-size: 11px !important;
+        letter-spacing: 0.07em !important;
+        text-transform: uppercase !important;
+        padding: 8px 14px !important;
+        border-radius: 0 !important;
+        transition: color 0.15s ease !important;
+    }
+    button[data-baseweb="tab"]:hover {
+        background-color: var(--ds-surface) !important;
+    }
+    /* Active tab indicator */
+    [data-testid="stTabs"] [data-baseweb="tab-highlight"] {
+        background-color: var(--ds-accent) !important;
+        height: 2px !important;
+        border-radius: 2px 2px 0 0 !important;
+    }
+    [data-testid="stTabs"] [data-baseweb="tab-border"] {
+        background-color: var(--ds-border) !important;
+    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -91,30 +189,66 @@ render_onboarding()
 
 # ── Landing screen ────────────────────────────────────────────────────────────
 if st.session_state.df_clean is None:
+    # Hero
     st.markdown(
         """
-        <div style="text-align:center;padding:80px 40px;">
-            <h1 style="font-size:2.8rem;font-weight:800;">DataSense</h1>
-            <p style="color:var(--ds-text2);margin-top:12px;line-height:1.8;">
-                Upload a CSV or Excel file in the sidebar to run automated quality control,<br>
+        <div style="text-align:center;padding:72px 40px 48px;">
+            <div style="display:inline-flex;align-items:center;justify-content:center;
+                        width:52px;height:52px;background:var(--ds-accent);
+                        border-radius:12px;margin-bottom:20px;">
+                <svg width="26" height="26" viewBox="0 0 24 24" fill="none"
+                     stroke="#0b0c0f" stroke-width="2.5" stroke-linecap="round">
+                    <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+                </svg>
+            </div>
+            <h1 style="font-size:2.6rem;font-weight:800;margin:0 0 12px;">DataSense</h1>
+            <p style="color:var(--ds-text2);font-size:14px;line-height:1.8;
+                      max-width:480px;margin:0 auto 8px;">
+                Upload a survey dataset in the sidebar to run automated quality control,
                 exploratory analysis, and generate a structured report.
             </p>
-            <div style="margin-top:40px;display:flex;justify-content:center;gap:20px;flex-wrap:wrap;">
-        """ + "".join([
-            f'<div style="background:var(--ds-surface);border:1px solid var(--ds-border);'
-            f'border-radius:8px;padding:18px 22px;width:160px;">'
-            f'<div style="font-size:1.3rem;">{ic}</div>'
-            f'<div style="font-family:Syne,sans-serif;font-weight:700;margin-top:6px;font-size:12px;">{tt}</div>'
-            f'<div style="font-size:10px;color:var(--ds-text2);margin-top:4px;">{dd}</div></div>'
-            for ic, tt, dd in [
-                ("🔍", "Missing Values",  "Per-column rates"),
-                ("📐", "Range Checks",    "Outlier detection"),
-                ("🔗", "Logic Rules",     "Multi-condition IF/THEN"),
-                ("📋", "Straightlining",  "Repeated answer detection"),
-                ("💬", "Verbatim QC",     "LLM quality scoring"),
-                ("🕵️", "Fabrication",    "Sequence & variance"),
-            ]
-        ]) + "</div></div>",
+            <p style="color:var(--ds-text2);font-size:12px;">
+                Supports <strong style="color:var(--ds-text)">CSV</strong>,
+                <strong style="color:var(--ds-text)">Excel (.xlsx/.xls)</strong>,
+                and <strong style="color:var(--ds-text)">SPSS (.sav)</strong>
+            </p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # Feature cards — 3-column grid
+    features = [
+        ("🔍", "Missing Values",   "Per-column flag rates with configurable thresholds"),
+        ("📐", "Range & Duration", "Outlier detection and interview length bounds"),
+        ("🔗", "Logic Rules",      "Multi-condition IF/THEN constraint checks"),
+        ("📋", "Straightlining",   "Grid question repeated-answer detection"),
+        ("💬", "Verbatim QC",      "LLM-powered grammar, coherence & relevance scoring"),
+        ("🕵️", "Fabrication",     "Sequential ID and low-variance response detection"),
+        ("👥", "Interviewers",     "Duration anomalies and productivity outliers"),
+        ("📊", "EDA & Charts",     "Interactive charts with AI chart builder"),
+        ("📁", "Batch Processing", "QC multiple files at once with one config"),
+    ]
+
+    cols = st.columns(3)
+    for i, (ic, tt, dd) in enumerate(features):
+        with cols[i % 3]:
+            st.markdown(
+                f'<div style="background:var(--ds-surface);border:1px solid var(--ds-border);'
+                f'border-radius:10px;padding:20px;margin-bottom:12px;'
+                f'transition:border-color 0.2s;">'
+                f'<div style="font-size:1.4rem;margin-bottom:10px;">{ic}</div>'
+                f'<div style="font-family:Syne,sans-serif;font-weight:700;'
+                f'font-size:13px;color:var(--ds-text);margin-bottom:6px;">{tt}</div>'
+                f'<div style="font-size:11px;color:var(--ds-text2);line-height:1.5;">{dd}</div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+
+    st.markdown(
+        '<p style="text-align:center;color:var(--ds-text2);font-size:11px;'
+        'letter-spacing:0.06em;text-transform:uppercase;margin-top:8px;">'
+        '← Upload a file in the sidebar to get started</p>',
         unsafe_allow_html=True,
     )
     st.stop()
@@ -216,16 +350,50 @@ def build_pdf_report(filename: str, df: pd.DataFrame, qc_results: list) -> bytes
 
 
 # ── Header ────────────────────────────────────────────────────────────────────
-h1, h2, h3 = st.columns([5, 1, 1])
+_total_flags = sum(r.flag_count for r in results)
+_crits        = sum(1 for r in results if r.severity == "critical" and r.flag_count > 0)
+_warns        = sum(1 for r in results if r.severity == "warning"  and r.flag_count > 0)
+
+# Build status badge HTML
+if _crits > 0:
+    _badge = (
+        f'<span style="background:rgba(240,74,106,0.12);color:#f04a6a;'
+        f'border:1px solid rgba(240,74,106,0.3);border-radius:20px;'
+        f'padding:3px 10px;font-size:11px;font-weight:600;letter-spacing:0.04em;">'
+        f'🔴 {_crits} critical</span>'
+    )
+elif _warns > 0:
+    _badge = (
+        f'<span style="background:rgba(240,192,74,0.12);color:#f0c04a;'
+        f'border:1px solid rgba(240,192,74,0.3);border-radius:20px;'
+        f'padding:3px 10px;font-size:11px;font-weight:600;letter-spacing:0.04em;">'
+        f'🟡 {_warns} warnings</span>'
+    )
+else:
+    _badge = (
+        '<span style="background:rgba(74,240,160,0.10);color:#4af0a0;'
+        'border:1px solid rgba(74,240,160,0.25);border-radius:20px;'
+        'padding:3px 10px;font-size:11px;font-weight:600;letter-spacing:0.04em;">'
+        '✓ Clean</span>'
+    )
+
+h1, h2, h3, h4 = st.columns([5, 1, 1, 1])
 with h1:
-    st.markdown(f"### {filename}")
-    st.caption(
-        f"{len(df):,} rows · {len(df.columns)} columns · "
-        f"Last run: {datetime.now().strftime('%H:%M:%S')}"
+    st.markdown(
+        f'<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">'
+        f'<span style="font-family:Syne,sans-serif;font-weight:700;font-size:1.1rem;'
+        f'color:var(--ds-text);">{filename}</span>'
+        f'{_badge}</div>'
+        f'<div style="margin-top:4px;font-size:11px;color:var(--ds-text2);'
+        f'letter-spacing:0.04em;">'
+        f'{len(df):,} rows &nbsp;·&nbsp; {len(df.columns)} columns &nbsp;·&nbsp; '
+        f'{len(results)} checks &nbsp;·&nbsp; {_total_flags:,} flags &nbsp;·&nbsp; '
+        f'{datetime.now().strftime("%H:%M")}</div>',
+        unsafe_allow_html=True,
     )
 with h2:
     st.download_button(
-        "↓ Excel",
+        "↓ Export Excel",
         data=build_report(df, results),
         file_name=f"QC_{filename.rsplit('.', 1)[0]}_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -234,27 +402,58 @@ with h2:
     )
 with h3:
     st.download_button(
-        "↓ PDF",
+        "↓ HTML Report",
         data=build_pdf_report(filename, df, results),
         file_name=f"QC_{filename.rsplit('.', 1)[0]}_{datetime.now().strftime('%Y%m%d_%H%M')}.html",
         mime="text/html",
         use_container_width=True,
-        help="Downloads as HTML — open in browser and File → Print → Save as PDF",
+        help="Opens in browser — use File → Print → Save as PDF",
     )
+with h4:
+    if st.button("⇄ Compare", use_container_width=True,
+                 help="Compare this dataset against another wave"):
+        st.session_state["_open_compare"] = True
+    if st.button("📁 Batch", use_container_width=True,
+                 help="View batch QC results"):
+        st.session_state["_open_batch"] = True
 
 st.divider()
 
+
+# ── Dialogs ───────────────────────────────────────────────────────────────────
+@st.dialog("Wave Comparison", width="large")
+def _compare_dialog():
+    compare_tab.render(df)
+
+
+@st.dialog("Batch QC Results", width="large")
+def _batch_dialog():
+    batch_tab.render(df, results)
+
+
+if st.session_state.pop("_open_compare", False):
+    _compare_dialog()
+
+if st.session_state.pop("_open_batch", False):
+    _batch_dialog()
+
+
 # ── Tabs ──────────────────────────────────────────────────────────────────────
-tab_qc, tab_logic, tab_sl, tab_verb, tab_int, tab_eda, tab_data, tab_cmp, tab_batch, tab_log, tab_cfg = st.tabs([
-    "QC Report", "Logic", "Straightlining", "Verbatim",
-    "Interviewers", "EDA", "Data", "Compare", "Batch", "Log", "Config",
+tab_qc, tab_int, tab_sl, tab_verb, tab_logic, tab_eda, tab_data = st.tabs([
+    "QC Report",
+    "Interviewers",
+    "Straightlining",
+    "Verbatim",
+    "Logic Rules",
+    "EDA",
+    "Data",
 ])
 
 with tab_qc:
     qc_tab.render(df, results)
 
-with tab_logic:
-    logic_tab.render(df, results)
+with tab_int:
+    interviewer_tab.render(df, results)
 
 with tab_sl:
     straightlining_tab.render(df, results)
@@ -262,156 +461,11 @@ with tab_sl:
 with tab_verb:
     verbatim_tab.render(df, results)
 
-with tab_int:
-    interviewer_tab.render(df, results)
+with tab_logic:
+    logic_tab.render(df, results)
 
 with tab_eda:
     eda_tab.render(df, results)
 
 with tab_data:
     data_tab.render(df)
-
-with tab_cmp:
-    compare_tab.render(df)
-
-with tab_batch:
-    batch_tab.render(df, results)
-
-with tab_log:
-    st.markdown("#### Audit Trail")
-    st.caption(
-        "Timestamped record of every QC run this session — file, config, flags raised. "
-        "Export for client accountability or project documentation."
-    )
-    audit_log = st.session_state.get("_audit_log", [])
-    if not audit_log:
-        st.info("No runs logged yet. Upload a file and run QC to start the audit trail.")
-    else:
-        summary_rows = [{
-            "Timestamp":   e["timestamp"],
-            "File":        e["filename"],
-            "Rows":        e["rows"],
-            "Checks Run":  e["checks_run"],
-            "Total Flags": e["total_flags"],
-            "Critical":    e["critical"],
-            "Warnings":    e["warnings"],
-            "Aliases Used": ", ".join(e.get("aliases_applied", [])) or "—",
-        } for e in audit_log]
-        st.dataframe(pd.DataFrame(summary_rows), use_container_width=True, hide_index=True)
-
-        log_buf = io.BytesIO(
-            pd.DataFrame(summary_rows).to_csv(index=False).encode()
-        )
-        st.download_button(
-            "↓ Export audit log (CSV)",
-            data=log_buf,
-            file_name=f"QC_AuditLog_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
-            mime="text/csv",
-        )
-
-        # Most recent run detail
-        latest = audit_log[-1]
-        with st.expander("Most recent run — check detail"):
-            if latest["flags_by_check"]:
-                check_rows = [{"Check": k, "Flags": v} for k, v in latest["flags_by_check"].items()]
-                st.dataframe(pd.DataFrame(check_rows), use_container_width=True, hide_index=True)
-            else:
-                st.caption("No flags raised in the most recent run.")
-            if latest.get("aliases_applied"):
-                st.caption(f"Aliases applied: {', '.join(latest['aliases_applied'])}")
-            st.json(latest["config_snapshot"], expanded=False)
-
-        if st.button("Clear audit log", type="secondary", key="clear_audit_log"):
-            st.session_state._audit_log = []
-            st.rerun()
-
-with tab_cfg:
-    st.markdown("#### Config Profiles")
-    st.markdown(
-        "<p style='color:var(--ds-text2);font-size:13px;margin-bottom:12px;'>"
-        "Save the current rule configuration as a named profile and reload it for future waves.</p>",
-        unsafe_allow_html=True,
-    )
-
-    PROFILES_DIR.mkdir(exist_ok=True)
-    saved_profiles = sorted(PROFILES_DIR.glob("*.json"))
-
-    cp1, cp2 = st.columns([3, 1])
-    with cp1:
-        profile_name = st.text_input("Profile name", placeholder="Ipsos Kenya Household 2025",
-                                     key="cfg_profile_name")
-    with cp2:
-        st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
-        if st.button("💾 Save", use_container_width=True, key="cfg_save"):
-            if profile_name.strip():
-                safe = "".join(c if c.isalnum() or c in " _-" else "_" for c in profile_name.strip())
-                path = PROFILES_DIR / f"{safe}.json"
-                payload = {
-                    "rules_config": st.session_state.rules_config,
-                    "custom_logic_rules": st.session_state.custom_logic_rules,
-                    "column_aliases": st.session_state.get("column_aliases", {}),
-                }
-                path.write_text(json.dumps(payload, indent=2))
-                st.success(f"Saved: {path.name}")
-                st.rerun()
-            else:
-                st.warning("Enter a profile name first.")
-
-    if saved_profiles:
-        st.markdown("##### Load a saved profile")
-        profile_opts = {p.stem: p for p in saved_profiles}
-        selected_profile = st.selectbox("Saved profiles", ["— select —"] + list(profile_opts.keys()),
-                                        key="cfg_load_sel")
-        if st.button("↩ Load profile", key="cfg_load_btn"):
-            if selected_profile != "— select —":
-                data = json.loads(profile_opts[selected_profile].read_text())
-                st.session_state.rules_config = data.get("rules_config", st.session_state.rules_config)
-                st.session_state.custom_logic_rules = data.get("custom_logic_rules", [])
-                st.session_state.column_aliases = data.get("column_aliases", {})
-                st.success(f"Profile '{selected_profile}' loaded — click ↺ Rerun QC to apply.")
-                st.rerun()
-
-    st.divider()
-    st.markdown("#### Column Aliases")
-    st.caption(
-        "Map your column names to standard names before QC runs. "
-        "e.g. 'INT_CODE' → 'interviewer_id'. Aliases are saved with profiles."
-    )
-
-    aliases = st.session_state.get("column_aliases", {})
-
-    # Show existing aliases with inline ✕ delete buttons
-    to_delete = []
-    for orig, target in list(aliases.items()):
-        a1, a2, a3 = st.columns([5, 5, 1])
-        a1.caption(orig)
-        a2.caption(f"→ {target}")
-        if a3.button("✕", key=f"del_alias_{orig}", help="Remove alias"):
-            to_delete.append(orig)
-    for k in to_delete:
-        del st.session_state.column_aliases[k]
-    if to_delete:
-        st.rerun()
-
-    if not aliases:
-        st.caption("No aliases defined yet.")
-
-    # Add new alias
-    ac1, ac2 = st.columns(2)
-    from_col = ac1.text_input("Your column",   placeholder="INT_CODE",       key="alias_from")
-    to_col   = ac2.text_input("Standard name", placeholder="interviewer_id", key="alias_to")
-    if st.button("Add alias", use_container_width=False, key="alias_add_btn"):
-        if from_col.strip() and to_col.strip():
-            st.session_state.column_aliases[from_col.strip()] = to_col.strip()
-            st.rerun()
-        else:
-            st.warning("Enter both the original column name and the standard name.")
-
-    st.divider()
-    st.markdown("#### Active Config")
-    st.json(st.session_state.rules_config)
-    st.markdown("#### Custom Logic Rules")
-    if st.session_state.custom_logic_rules:
-        st.json(st.session_state.custom_logic_rules)
-    else:
-        st.caption("No custom logic rules added yet.")
