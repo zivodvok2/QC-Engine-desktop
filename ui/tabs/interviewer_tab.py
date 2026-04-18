@@ -1,5 +1,5 @@
 """
-ui/tabs/interviewer_tab.py — Interviewer Risk Scoring
+ui/tabs/interviewer_tab.py — Interviewer Risk Scoring + Feedback Letters
 
 Composite risk score per interviewer, aggregated from:
   - Fabrication flags   (40%)
@@ -9,6 +9,7 @@ Composite risk score per interviewer, aggregated from:
 """
 
 import io
+import requests
 import streamlit as st
 import pandas as pd
 
@@ -17,6 +18,72 @@ try:
     PLOTLY = True
 except ImportError:
     PLOTLY = False
+
+
+def _generate_feedback_letter(interviewer_id: str, row: pd.Series) -> str | None:
+    """Call Groq to generate a structured feedback letter for the selected interviewer."""
+    try:
+        from checks.verbatim_checks import _get_api_key
+        api_key = _get_api_key()
+    except Exception:
+        return None
+    if not api_key:
+        return None
+
+    issue_lines = []
+    for col, label in [
+        ("fabrication_flags",    "Fabrication / sequential-ID flags"),
+        ("duration_flags",       "Duration anomaly flags"),
+        ("straightlining_flags", "Straightlining flags"),
+        ("productivity_flags",   "Productivity outlier flags"),
+        ("verbatim_flags",       "Verbatim quality flags"),
+    ]:
+        n = int(row.get(col, 0))
+        if n > 0:
+            issue_lines.append(f"  • {label}: {n} ({round(n / max(int(row['total_interviews']), 1) * 100, 1)}%)")
+
+    issues_text = "\n".join(issue_lines) if issue_lines else "  • No specific flags — general review."
+
+    context = (
+        f"Interviewer ID: {interviewer_id}\n"
+        f"Risk Score: {row['risk_score']}/100 ({row['risk_level']})\n"
+        f"Total interviews: {int(row['total_interviews'])}\n"
+        f"Total flags: {int(row['total_flags'])} "
+        f"({row['flag_rate_pct']:.1f}% flag rate)\n\n"
+        f"Issues identified:\n{issues_text}"
+    )
+
+    prompt = (
+        "You are a senior survey QC manager writing a formal but constructive feedback letter "
+        "to a field interviewer based on automated QC findings.\n\n"
+        f"QC Summary:\n{context}\n\n"
+        "Write a professional letter structured as:\n"
+        "1. Opening — acknowledge their effort and explain the purpose of the review\n"
+        "2. Findings — describe each flagged issue clearly and what it indicates\n"
+        "3. Standards — briefly state what good quality looks like\n"
+        "4. Required actions — specific, actionable steps to improve\n"
+        "5. Next steps — what happens next (re-check, retraining, etc.)\n"
+        "6. Closing — supportive, professional tone\n\n"
+        f"Address it: 'Dear Interviewer {interviewer_id},'\n"
+        "Write the complete letter. Plain business English, no bullet points in the letter body."
+    )
+
+    try:
+        r = requests.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            json={
+                "model": "llama-3.1-8b-instant",
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.35,
+                "max_tokens": 900,
+            },
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            timeout=30,
+        )
+        r.raise_for_status()
+        return r.json()["choices"][0]["message"]["content"].strip()
+    except Exception:
+        return None
 
 WEIGHTS = {"fabrication": 0.40, "duration": 0.25, "straightlining": 0.25, "productivity": 0.10}
 
@@ -228,6 +295,55 @@ def render(df: pd.DataFrame, results: list):
                 f"({int(row['total_flags']):,} / {int(row['total_interviews']):,}) "
                 f"— above {flag_thr}% threshold · Risk Score: **{int(row['risk_score'])}** · {row['risk_level']}"
             )
+
+    # ── Feedback letter generator ─────────────────────────────────────────────
+    st.divider()
+    st.markdown("#### Interviewer Feedback Letter")
+    st.caption(
+        "Select an interviewer and generate a structured feedback letter via Groq AI — "
+        "summarises their flags, expected standards, and corrective actions. "
+        "Ready to send."
+    )
+
+    interviewer_options = scores[int_col].astype(str).tolist()
+    fl_col1, fl_col2 = st.columns([3, 1])
+    selected_int = fl_col1.selectbox(
+        "Interviewer", interviewer_options,
+        key="int_letter_sel", label_visibility="collapsed",
+    )
+    with fl_col2:
+        st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
+        gen_btn = st.button(
+            "Generate letter", key="int_letter_btn",
+            use_container_width=True, type="primary",
+        )
+
+    if gen_btn:
+        sel_row = scores[scores[int_col].astype(str) == selected_int].iloc[0]
+        with st.spinner("Writing letter…"):
+            letter = _generate_feedback_letter(selected_int, sel_row)
+        if letter:
+            st.session_state["_last_letter"] = (selected_int, letter)
+        else:
+            st.warning(
+                "Could not generate — add a Groq API key in ⚙️ Settings first."
+            )
+
+    if st.session_state.get("_last_letter"):
+        _int_id, _letter = st.session_state["_last_letter"]
+        st.text_area(
+            f"Letter — Interviewer {_int_id}",
+            value=_letter,
+            height=380,
+            key="int_letter_output",
+        )
+        st.download_button(
+            f"↓ Download letter ({_int_id})",
+            data=_letter.encode("utf-8"),
+            file_name=f"feedback_letter_{_int_id}.txt",
+            mime="text/plain",
+            use_container_width=True,
+        )
 
     # ── Score methodology ─────────────────────────────────────────────────────
     with st.expander("Score methodology"):

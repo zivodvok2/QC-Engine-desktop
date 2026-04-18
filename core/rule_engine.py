@@ -19,6 +19,7 @@ from checks.advanced_checks import (
     FabricationCheck,
 )
 from checks.verbatim_checks import VerbatimQualityCheck
+from checks.consistency_checks import NearDuplicateCheck
 
 logger = setup_logger("rule_engine")
 
@@ -140,6 +141,16 @@ class RuleEngine:
                 min_score=verb.get("min_score", 2),
                 sample_size=verb.get("sample_size", 50),
                 interviewer_column=verb.get("interviewer_column"),
+            ))
+
+        # ── Near-duplicate detection ──────────────────────────────────────────
+        nd = cfg.get("near_duplicate_check", {})
+        if nd.get("enabled") and (nd.get("unique_columns") or nd.get("combo_columns")):
+            self.checks.append(NearDuplicateCheck(
+                id_column=nd.get("id_column"),
+                unique_columns=nd.get("unique_columns", []),
+                combo_columns=nd.get("combo_columns", []),
+                max_combo_count=nd.get("max_combo_count", 3),
             ))
 
         logger.info(f"Rule engine initialized with {len(self.checks)} checks.")
