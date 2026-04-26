@@ -2,7 +2,7 @@ services:
   - type: web
     name: servallab-api
     runtime: python
-    buildCommand: pip install -r requirements.txt
+    buildCommand: pip install -r requirements-api.txt
     startCommand: python -m uvicorn api:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: PYTHON_VERSION
