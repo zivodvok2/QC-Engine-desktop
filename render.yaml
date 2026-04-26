@@ -1,5 +1,9 @@
 services:
   - type: web
-    name: servallab-api
-    runtime: docker
-    dockerfilePath: ./Dockerfile
+    name: servalab-api
+    runtime: python
+    buildCommand: pip install --upgrade pip && pip install -r requirements-api.txt
+    startCommand: uvicorn api:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
