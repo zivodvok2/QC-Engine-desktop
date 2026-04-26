@@ -34,8 +34,11 @@ class DataCleaner:
 
     def _strip_whitespace(self, df: pd.DataFrame) -> pd.DataFrame:
         """Strip leading/trailing whitespace from string columns."""
-        str_cols = df.select_dtypes(include="object").columns
-        df[str_cols] = df[str_cols].apply(lambda col: col.str.strip() if col.dtype == "object" else col)
+        for col in df.select_dtypes(include="object").columns:
+            try:
+                df[col] = df[col].apply(lambda x: x.strip() if isinstance(x, str) else x)
+            except Exception:
+                pass
         return df
 
     def _normalize_booleans(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -47,18 +50,29 @@ class DataCleaner:
             "y": True, "n": False,
         }
         for col in df.select_dtypes(include="object").columns:
-            sample = df[col].dropna().str.lower().unique()
-            if all(v in bool_map for v in sample):
-                df[col] = df[col].str.lower().map(bool_map)
-                logger.debug(f"Converted column '{col}' to boolean.")
+            try:
+                non_null = df[col].dropna()
+                # Only process columns where every non-null value is a plain string
+                if not all(isinstance(v, str) for v in non_null):
+                    continue
+                sample = non_null.str.lower().unique()
+                if all(v in bool_map for v in sample):
+                    df[col] = df[col].apply(
+                        lambda x: bool_map[x.lower()] if isinstance(x, str) else x
+                    )
+                    logger.debug(f"Converted column '{col}' to boolean.")
+            except Exception:
+                pass
         return df
 
     def _normalize_categories(self, df: pd.DataFrame) -> pd.DataFrame:
         """Title-case string columns with low cardinality (likely categories)."""
         for col in df.select_dtypes(include="object").columns:
-            unique_count = df[col].nunique()
-            if unique_count <= 30:
-                df[col] = df[col].str.title()
+            try:
+                if df[col].nunique() <= 30:
+                    df[col] = df[col].apply(lambda x: x.title() if isinstance(x, str) else x)
+            except Exception:
+                pass
         return df
 
     def coerce_types(self, df: pd.DataFrame, type_map: dict) -> pd.DataFrame:

@@ -1,8 +1,32 @@
-streamlit>=1.32.0
+# Web framework & server
+fastapi>=0.110.0
+#uvicorn[standard]>=0.29.0
+uvicorn
+
+starlette>=0.27.0
+python-multipart>=0.0.9
+aiofiles>=23.0.0
+
+# Data processing
 pandas>=2.0.0
+numpy>=1.26.0
 openpyxl>=3.1.0
 xlrd>=2.0.0
-numpy>=1.26.0
-plotly>=5.18.0
+pyarrow>=10.0.0
+scipy>=1.11.0
+
+# Validation
+pydantic>=2.0.0
+
+# HTTP
 requests>=2.31.0
+httpx>=0.24.0
+
+# Visualisation
+plotly>=5.18.0
+
+# Streamlit UI (legacy entry point)
+streamlit>=1.32.0
+
+# Testing
 pytest>=8.0.0
