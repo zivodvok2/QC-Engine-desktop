@@ -1,14 +1,14 @@
 [
   {
     "id": "welcome",
-    "title": "Welcome to DataSense",
-    "body": "DataSense is a survey quality control tool. Upload a CSV or Excel file to get started — it will automatically detect issues in your data and give you a structured report.",
+    "title": "Welcome to Servallab",
+    "body": "Servallab is a survey quality control tool. Upload a CSV or Excel file to get started — it will automatically detect issues in your data and give you a structured report.",
     "icon": "👋"
   },
   {
     "id": "upload",
     "title": "Upload your data",
-    "body": "Use the sidebar to upload a CSV or Excel file. DataSense accepts .csv, .xlsx, and .xls formats. Once uploaded, QC checks run automatically.",
+    "body": "Use the sidebar to upload a CSV or Excel file. Servallab accepts .csv, .xlsx, and .xls formats. Once uploaded, QC checks run automatically.",
     "icon": "📂"
   },
   {

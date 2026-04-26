@@ -130,14 +130,14 @@ def render_settings():
         show_onboarding_button()
         st.link_button(
             "📧 Send feedback",
-            url="mailto:feedback@datasense.app?subject=DataSense Feedback",
+            url="mailto:feedback@servalab.com?subject=Servallab Feedback",
             use_container_width=True,
         )
 
         st.divider()
 
         # ── Version ───────────────────────────────────────────────────────
-        st.markdown(f"**DataSense v{version_data.get('version', '?')}**")
+        st.markdown(f"**Servallab v{version_data.get('version', '?')}**")
         st.caption(f"Released {version_data.get('release_date', '')}")
         with st.expander("Changelog"):
             for entry in version_data.get("changelog", []):

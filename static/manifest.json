@@ -1,7 +1,7 @@
 {
-  "name": "DataSense — Survey QC Engine",
-  "short_name": "DataSense",
-  "description": "Automated quality control for CATI survey data",
+  "name": "Servallab — Survey QC Engine",
+  "short_name": "Servallab",
+  "description": "Precision quality control for CATI survey data",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0b0c0f",

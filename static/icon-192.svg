@@ -1,7 +1,42 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192" width="192" height="192">
-  <rect width="192" height="192" rx="32" fill="#0b0c0f"/>
-  <rect width="192" height="192" rx="32" fill="#111318"/>
-  <polyline points="172,96 140,96 116,164 76,28 52,96 20,96"
-            fill="none" stroke="#4af0a0" stroke-width="14"
-            stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Background -->
+  <rect width="192" height="192" rx="36" fill="#0b0c0f"/>
+  <rect width="192" height="192" rx="36" fill="#111318"/>
+
+  <!-- Serval ears (sharp, tall triangles) -->
+  <polygon points="52,82 66,38 80,76" fill="#4af0a0"/>
+  <polygon points="112,76 126,38 140,82" fill="#4af0a0"/>
+  <!-- Inner ear -->
+  <polygon points="58,76 66,52 74,74" fill="#111318"/>
+  <polygon points="118,74 126,52 134,76" fill="#111318"/>
+
+  <!-- Head -->
+  <ellipse cx="96" cy="108" rx="52" ry="44" fill="none" stroke="#4af0a0" stroke-width="5.5"/>
+
+  <!-- Eyes -->
+  <ellipse cx="80" cy="98" rx="7.5" ry="9" fill="#4af0a0"/>
+  <ellipse cx="112" cy="98" rx="7.5" ry="9" fill="#4af0a0"/>
+  <!-- Pupils (vertical slits) -->
+  <ellipse cx="80" cy="98" rx="2.5" ry="6" fill="#111318"/>
+  <ellipse cx="112" cy="98" rx="2.5" ry="6" fill="#111318"/>
+
+  <!-- Nose -->
+  <path d="M90 112 L96 118 L102 112 Z" fill="#4af0a0"/>
+
+  <!-- Whisker dots -->
+  <circle cx="74" cy="120" r="2.5" fill="#4af0a0" opacity="0.7"/>
+  <circle cx="84" cy="124" r="2.5" fill="#4af0a0" opacity="0.7"/>
+  <circle cx="108" cy="124" r="2.5" fill="#4af0a0" opacity="0.7"/>
+  <circle cx="118" cy="120" r="2.5" fill="#4af0a0" opacity="0.7"/>
+
+  <!-- Spots on head -->
+  <ellipse cx="76" cy="138" rx="6" ry="4" fill="#4af0a0" opacity="0.35"/>
+  <ellipse cx="96" cy="143" rx="6" ry="4" fill="#4af0a0" opacity="0.35"/>
+  <ellipse cx="116" cy="138" rx="6" ry="4" fill="#4af0a0" opacity="0.35"/>
+
+  <!-- SL wordmark -->
+  <text x="96" y="178" text-anchor="middle"
+        font-family="Arial Black, Arial, sans-serif"
+        font-weight="900" font-size="18" letter-spacing="5"
+        fill="#4af0a0">SL</text>
 </svg>

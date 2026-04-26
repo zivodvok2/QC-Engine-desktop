@@ -1,5 +1,5 @@
 """
-ui/sidebar.py — DataSense sidebar
+ui/sidebar.py — Servallab sidebar
 
 Performance notes:
 - Pipeline only reruns when file hash changes or user clicks Rerun QC
@@ -176,7 +176,7 @@ def render_sidebar():
             """<div style="padding:8px 0 14px;">
                 <div style="font-family:'Syne',sans-serif;font-weight:800;font-size:18px;
                             color:var(--ds-text);letter-spacing:0.02em;">
-                    <span style="color:var(--ds-accent);">■</span> DataSense
+                    <span style="color:var(--ds-accent);">■</span> Servallab
                 </div>
                 <div style="font-size:9px;color:var(--ds-text2);letter-spacing:0.15em;
                             text-transform:uppercase;margin-top:2px;">
@@ -281,7 +281,7 @@ def render_sidebar():
             st.download_button(
                 "↓ Save project config",
                 data=json.dumps(proj_data, indent=2, default=str),
-                file_name=f"{st.session_state.project_name or 'project'}.datasense.json",
+                file_name=f"{st.session_state.project_name or 'project'}.servallab.json",
                 mime="application/json",
                 use_container_width=True,
             )
@@ -290,7 +290,7 @@ def render_sidebar():
                 type=["json"],
                 key="proj_load",
                 label_visibility="visible",
-                help="Upload a previously saved .datasense.json file",
+                help="Upload a previously saved .servallab.json file",
             )
             if proj_file:
                 try:

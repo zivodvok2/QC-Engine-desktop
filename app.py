@@ -1,5 +1,5 @@
 """
-app.py — DataSense QC Engine
+app.py — Servallab QC Engine
 Run: streamlit run app.py
 
 Performance notes:
@@ -28,8 +28,8 @@ from ui.tabs import (qc_tab, eda_tab, logic_tab, straightlining_tab,
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="DataSense",
-    page_icon="📊",
+    page_title="Servallab",
+    page_icon="🐆",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -133,7 +133,7 @@ if st.session_state.df_clean is None:
     st.markdown("""
     <div style="text-align:center;padding:80px 40px 40px;">
         <div style="font-family:var(--ds-head);font-size:3rem;font-weight:800;
-                    letter-spacing:-0.02em;">DataSense</div>
+                    letter-spacing:-0.02em;">Servallab</div>
         <div style="font-size:10px;letter-spacing:0.25em;text-transform:uppercase;
                     color:var(--ds-accent);margin-top:6px;">Survey Quality Control Engine</div>
         <p style="color:var(--ds-text2);margin-top:20px;font-size:14px;
@@ -232,7 +232,7 @@ def _build_html_report() -> bytes:
             f"<table><thead><tr>{th}</tr></thead><tbody>{tbody}</tbody></table>"
         )
     html = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
-<title>DataSense QC — {filename}</title>
+<title>Servallab QC — {filename}</title>
 <style>
 body{{font-family:'DM Mono',monospace,sans-serif;margin:40px;color:#1a1a2e;font-size:13px;}}
 h1{{font-size:26px;}} h2{{font-size:15px;color:#555;border-bottom:1px solid #ddd;
@@ -246,7 +246,7 @@ th{{background:#f0f2ff;text-align:left;padding:6px 10px;border:1px solid #dde;}}
 td{{padding:5px 10px;border:1px solid #eee;word-break:break-word;max-width:280px;}}
 tr:nth-child(even) td{{background:#fafafa;}}
 </style></head><body>
-<h1>DataSense QC Report</h1>
+<h1>Servallab QC Report</h1>
 <div class="meta">{filename} &nbsp;·&nbsp; {len(df):,} rows · {len(df.columns)} cols
 &nbsp;·&nbsp; Generated {now}</div>
 <div class="cards">
@@ -285,7 +285,7 @@ with h2:
     st.download_button(
         "↓ Excel",
         data=_build_excel_report(),
-        file_name=f"DataSense_{base}_{stamp}.xlsx",
+        file_name=f"Servallab_{base}_{stamp}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         use_container_width=True,
         type="primary",
@@ -295,7 +295,7 @@ with h3:
     st.download_button(
         "↓ Report",
         data=_build_html_report(),
-        file_name=f"DataSense_{base}_{stamp}.html",
+        file_name=f"Servallab_{base}_{stamp}.html",
         mime="text/html",
         use_container_width=True,
         help="Open in browser → File → Print → Save as PDF",
@@ -365,7 +365,7 @@ with tab_cfg:
         st.dataframe(rows, use_container_width=True, hide_index=True)
         buf = io.BytesIO(pd.DataFrame(rows).to_csv(index=False).encode())
         c1, c2 = st.columns(2)
-        c1.download_button("↓ Export CSV", data=buf, file_name="DataSense_audit.csv",
+        c1.download_button("↓ Export CSV", data=buf, file_name="Servallab_audit.csv",
                            mime="text/csv", use_container_width=True)
         if c2.button("Clear log", type="secondary", use_container_width=True):
             st.session_state._audit_log = []
