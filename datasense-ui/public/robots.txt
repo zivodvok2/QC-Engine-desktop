@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://servallab.vercel.app/sitemap.xml

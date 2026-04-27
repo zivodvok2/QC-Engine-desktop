@@ -74,7 +74,7 @@ export function Sidebar() {
         </div>
         {/* Backend health */}
         {!healthLoading && (
-          <div title={online ? 'Backend online' : 'Backend offline — start uvicorn api:app'}>
+          <div title={online ? 'Backend online' : 'Backend unreachable'}>
             {online
               ? <Wifi size={12} className="text-accent" />
               : <WifiOff size={12} className="text-critical animate-pulse" />
@@ -85,7 +85,7 @@ export function Sidebar() {
 
       {!online && !healthLoading && (
         <div className="px-4 py-2 bg-critical/10 border-b border-critical/30">
-          <p className="text-[10px] text-critical leading-tight">Backend offline. Run: <code className="font-mono">uvicorn api:app --reload</code></p>
+          <p className="text-[10px] text-critical leading-tight">Backend unreachable. Please try again shortly.</p>
         </div>
       )}
 
