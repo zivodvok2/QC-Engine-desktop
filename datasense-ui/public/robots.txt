@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://servallab.vercel.app/sitemap.xml
+Sitemap: https://servalab.com/sitemap.xml
