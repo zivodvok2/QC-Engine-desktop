@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
-import { Play, ChevronDown, ChevronRight, Sparkles, AlertCircle, Wifi, WifiOff, Clapperboard } from 'lucide-react'
+import { Play, ChevronDown, ChevronRight, Sparkles, AlertCircle, Wifi, WifiOff, Clapperboard, Eye, EyeOff, Settings, Mail, RotateCcw } from 'lucide-react'
 import { FileUpload } from '../upload/FileUpload'
+import { relaunchOnboarding } from '../onboarding/OnboardingTooltip'
 import { useAppStore } from '../../store/appStore'
 import { useQCRun } from '../../hooks/useQCRun'
 import { useHealth } from '../../hooks/useHealth'
@@ -49,7 +50,12 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 }
 
 export function Sidebar() {
-  const { config, updateConfig, fileId, jobStatus, jobProgress, jobError, setActiveTab, openDemos } = useAppStore()
+  const { config, updateConfig, fileId, jobStatus, jobProgress, jobError,
+          setActiveTab, openDemos, openSettings,
+          theme, setTheme, accent, setAccent,
+          groqApiKey, setGroqApiKey } = useAppStore()
+  const [showKey, setShowKey] = useState(false)
+  const [localKey, setLocalKey] = useState(groqApiKey)
   const { run, isRunning, runError } = useQCRun()
   const { online, loading: healthLoading } = useHealth()
 
@@ -81,6 +87,13 @@ export function Sidebar() {
             }
           </div>
         )}
+        <button
+          onClick={openSettings}
+          title="Settings"
+          className="text-muted hover:text-tx transition-colors"
+        >
+          <Settings size={14} />
+        </button>
       </div>
 
       {!online && !healthLoading && (
@@ -250,6 +263,117 @@ export function Sidebar() {
             </Field>
           </div>
         )}
+      </Section>
+
+      {/* Settings */}
+      <Section title="Settings">
+        {/* Theme */}
+        <div className="space-y-1.5">
+          <p className="text-xs text-muted">Theme</p>
+          <div className="flex gap-1.5">
+            {(['dark', 'light', 'midnight'] as const).map((t) => (
+              <button
+                key={t}
+                onClick={() => setTheme(t)}
+                className={`flex-1 py-1.5 text-[10px] rounded border capitalize transition-colors ${
+                  theme === t
+                    ? 'border-accent text-accent bg-accent/10'
+                    : 'border-line text-muted hover:border-muted'
+                }`}
+              >
+                {t}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Accent colour */}
+        <div className="space-y-1.5">
+          <p className="text-xs text-muted">Accent colour</p>
+          <div className="flex gap-2">
+            {([
+              ['emerald', '#4af0a0'],
+              ['blue',    '#4a9ef0'],
+              ['purple',  '#a078f0'],
+              ['orange',  '#f09040'],
+              ['pink',    '#f04a90'],
+            ] as const).map(([name, hex]) => (
+              <button
+                key={name}
+                title={name}
+                onClick={() => setAccent(name)}
+                style={{ background: hex }}
+                className={`w-6 h-6 rounded-full transition-transform hover:scale-110 ${
+                  accent === name ? 'ring-2 ring-offset-1 ring-offset-surface ring-white/60 scale-110' : ''
+                }`}
+              />
+            ))}
+          </div>
+        </div>
+
+        {/* Groq API key */}
+        <div className="space-y-1">
+          <p className="text-xs text-muted flex items-center gap-1"><Sparkles size={10} />Groq API key</p>
+          <div className="flex gap-1">
+            <div className="relative flex-1">
+              <input
+                type={showKey ? 'text' : 'password'}
+                className="w-full pr-7 text-xs"
+                value={localKey}
+                onChange={(e) => setLocalKey(e.target.value)}
+                onBlur={() => setGroqApiKey(localKey.trim())}
+                placeholder="gsk_…"
+              />
+              <button
+                onClick={() => setShowKey((s) => !s)}
+                className="absolute right-1.5 top-1/2 -translate-y-1/2 text-muted hover:text-tx"
+              >
+                {showKey ? <EyeOff size={10} /> : <Eye size={10} />}
+              </button>
+            </div>
+            <button
+              onClick={() => setGroqApiKey(localKey.trim())}
+              className="btn-ghost text-[10px] px-2 py-1"
+            >
+              Save
+            </button>
+          </div>
+        </div>
+
+        {/* About */}
+        <div className="space-y-1.5">
+          <p className="text-xs text-muted uppercase tracking-wider">About</p>
+          <p className="text-xs text-muted leading-relaxed">
+            Servallab is a survey QC engine for CATI research teams — detecting missing values,
+            straightlining, interviewer fraud, logic violations, and more before sign-off.
+          </p>
+        </div>
+
+        {/* Contact / actions */}
+        <div className="space-y-1.5">
+          <p className="text-xs text-muted uppercase tracking-wider">Contact</p>
+          <a
+            href="mailto:zivoo.ouma@outlook.com"
+            className="flex items-center gap-2 text-xs text-muted hover:text-tx transition-colors"
+          >
+            <Mail size={11} className="text-accent shrink-0" />
+            Contact developer
+          </a>
+          <a
+            href="mailto:zivoo.ouma@outlook.com?subject=Servallab Feedback"
+            className="flex items-center gap-2 text-xs text-muted hover:text-tx transition-colors"
+          >
+            <Mail size={11} className="text-accent shrink-0" />
+            Send feedback
+          </a>
+          <button
+            onClick={relaunchOnboarding}
+            className="flex items-center gap-2 text-xs text-muted hover:text-tx transition-colors w-full"
+          >
+            <RotateCcw size={11} className="text-accent shrink-0" />
+            Relaunch tour
+          </button>
+        </div>
       </Section>
 
       {/* Demos quick link */}

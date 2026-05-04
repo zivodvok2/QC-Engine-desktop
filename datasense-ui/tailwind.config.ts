@@ -5,17 +5,17 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        bg:       '#0b0c0f',
-        surface:  '#111318',
-        surface2: '#181b22',
-        line:     '#1f2330',
-        accent:   '#4af0a0',
-        'accent-dim': '#2ab870',
-        tx:       '#e8eaf2',
-        muted:    '#8b90a8',
-        critical: '#f04a6a',
-        warning:  '#f0c04a',
-        info:     '#4a9ef0',
+        bg:           'rgb(var(--c-bg) / <alpha-value>)',
+        surface:      'rgb(var(--c-surface) / <alpha-value>)',
+        surface2:     'rgb(var(--c-surface2) / <alpha-value>)',
+        line:         'rgb(var(--c-line) / <alpha-value>)',
+        accent:       'rgb(var(--c-accent) / <alpha-value>)',
+        'accent-dim': 'rgb(var(--c-accent-dim) / <alpha-value>)',
+        tx:           'rgb(var(--c-tx) / <alpha-value>)',
+        muted:        'rgb(var(--c-muted) / <alpha-value>)',
+        critical:     '#f04a6a',
+        warning:      '#f0c04a',
+        info:         '#4a9ef0',
       },
       fontFamily: {
         mono:    ['"DM Mono"', 'ui-monospace', 'monospace'],

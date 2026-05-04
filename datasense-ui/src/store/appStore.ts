@@ -32,6 +32,9 @@ interface AppState {
   // ui
   activeTab: string
   demosOpen: boolean
+  settingsOpen: boolean
+  theme: 'dark' | 'light' | 'midnight'
+  accent: 'emerald' | 'blue' | 'purple' | 'orange' | 'pink'
 
   // actions
   setFile: (data: UploadResponse) => void
@@ -45,6 +48,10 @@ interface AppState {
   setActiveTab: (tab: string) => void
   openDemos: () => void
   closeDemos: () => void
+  openSettings: () => void
+  closeSettings: () => void
+  setTheme: (t: 'dark' | 'light' | 'midnight') => void
+  setAccent: (a: 'emerald' | 'blue' | 'purple' | 'orange' | 'pink') => void
   clearFile: () => void
   reset: () => void
 }
@@ -68,6 +75,9 @@ export const useAppStore = create<AppState>((set) => ({
   groqApiKey: localStorage.getItem('ds_groq_api_key') ?? '',
   activeTab: 'QC Report',
   demosOpen: false,
+  settingsOpen: false,
+  theme: (localStorage.getItem('ds_theme') as 'dark' | 'light' | 'midnight') ?? 'dark',
+  accent: (localStorage.getItem('ds_accent') as 'emerald' | 'blue' | 'purple' | 'orange' | 'pink') ?? 'emerald',
 
   setFile: (data) =>
     set({
@@ -106,6 +116,17 @@ export const useAppStore = create<AppState>((set) => ({
 
   openDemos: () => set({ demosOpen: true }),
   closeDemos: () => set({ demosOpen: false }),
+  openSettings: () => set({ settingsOpen: true }),
+  closeSettings: () => set({ settingsOpen: false }),
+
+  setTheme: (t) => {
+    localStorage.setItem('ds_theme', t)
+    set({ theme: t })
+  },
+  setAccent: (a) => {
+    localStorage.setItem('ds_accent', a)
+    set({ accent: a })
+  },
 
   clearFile: () =>
     set({

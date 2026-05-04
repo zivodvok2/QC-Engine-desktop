@@ -2,6 +2,41 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ── Theme tokens ──────────────────────────────────────────────────────────── */
+/* Values are space-separated R G B for Tailwind's rgb(var / alpha) pattern    */
+
+:root {
+  /* Dark (default) */
+  --c-bg:         11 12 15;
+  --c-surface:    17 19 24;
+  --c-surface2:   24 27 34;
+  --c-line:       31 35 48;
+  --c-tx:         232 234 242;
+  --c-muted:      139 144 168;
+  /* Accent: emerald (default) */
+  --c-accent:     74 240 160;
+  --c-accent-dim: 42 184 112;
+}
+
+[data-theme="light"] {
+  --c-bg:         244 245 247;
+  --c-surface:    255 255 255;
+  --c-surface2:   238 240 244;
+  --c-line:       210 215 228;
+  --c-tx:         15 17 23;
+  --c-muted:      100 108 128;
+}
+
+[data-theme="midnight"] {
+  --c-bg:         5 6 10;
+  --c-surface:    10 12 18;
+  --c-surface2:   14 17 26;
+  --c-line:       20 25 40;
+  --c-tx:         220 224 240;
+  --c-muted:      110 118 148;
+}
+
+/* ── Base ───────────────────────────────────────────────────────────────────── */
 @layer base {
   html, body, #root {
     @apply h-full font-mono bg-bg text-tx;
@@ -25,11 +60,12 @@
     @apply bg-surface2 text-tx border border-line rounded px-2 py-1 text-sm outline-none;
   }
 
-  input[type='text'], input[type='number'] {
+  input[type='text'], input[type='number'], input[type='password'] {
     @apply bg-surface2 text-tx border border-line rounded px-2 py-1 text-sm outline-none focus:border-accent;
   }
 }
 
+/* ── Components ─────────────────────────────────────────────────────────────── */
 @layer components {
   .btn-primary {
     @apply bg-accent text-bg font-display font-bold px-4 py-2 rounded text-sm

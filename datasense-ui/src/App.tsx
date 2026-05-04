@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useEffect } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import {
   ShieldCheck, Braces, TrendingDown, Users, Target,
@@ -25,6 +25,26 @@ import { useAppStore } from './store/appStore'
 const qc = new QueryClient({
   defaultOptions: { queries: { retry: 1, refetchOnWindowFocus: false } },
 })
+
+const ACCENT_VARS: Record<string, [string, string]> = {
+  emerald: ['74 240 160', '42 184 112'],
+  blue:    ['74 158 240', '42 110 200'],
+  purple:  ['160 120 240', '110 80 200'],
+  orange:  ['240 144 64',  '200 100 24'],
+  pink:    ['240 74 144',  '200 34 104'],
+}
+
+function ThemeSync() {
+  const { theme, accent } = useAppStore()
+  useEffect(() => {
+    const root = document.documentElement
+    root.setAttribute('data-theme', theme)
+    const [acc, dim] = ACCENT_VARS[accent]
+    root.style.setProperty('--c-accent', acc)
+    root.style.setProperty('--c-accent-dim', dim)
+  }, [theme, accent])
+  return null
+}
 
 const FEATURE_CARDS = [
   { icon: ShieldCheck,       tab: 'QC Report',      desc: 'Missing values, range violations, duplicates, and fabrication flags in one report.' },
@@ -140,8 +160,7 @@ function TabContent() {
 }
 
 function AppShell() {
-  const { fileId, demosOpen } = useAppStore()
-  const [showSettings, setShowSettings] = useState(false)
+  const { fileId, demosOpen, settingsOpen, openSettings, closeSettings } = useAppStore()
 
   return (
     <div className="flex h-full">
@@ -149,7 +168,7 @@ function AppShell() {
       <div className="flex-1 flex flex-col overflow-hidden">
         {fileId ? (
           <>
-            <Header onSettings={() => setShowSettings(true)} />
+            <Header onSettings={openSettings} />
             <TabContent />
           </>
         ) : (
@@ -158,7 +177,7 @@ function AppShell() {
           </main>
         )}
       </div>
-      {showSettings && <SettingsPanel onClose={() => setShowSettings(false)} />}
+      {settingsOpen && <SettingsPanel onClose={closeSettings} />}
       {demosOpen && !fileId && <DemosModal />}
     </div>
   )
@@ -167,6 +186,7 @@ function AppShell() {
 export default function App() {
   return (
     <QueryClientProvider client={qc}>
+      <ThemeSync />
       <OnboardingTooltip />
       <AppShell />
     </QueryClientProvider>
