@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { Play, ChevronDown, ChevronRight, Sparkles, AlertCircle, Wifi, WifiOff } from 'lucide-react'
+import { Play, ChevronDown, ChevronRight, Sparkles, AlertCircle, Wifi, WifiOff, Clapperboard } from 'lucide-react'
 import { FileUpload } from '../upload/FileUpload'
 import { useAppStore } from '../../store/appStore'
 import { useQCRun } from '../../hooks/useQCRun'
@@ -49,7 +49,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 }
 
 export function Sidebar() {
-  const { config, updateConfig, fileId, jobStatus, jobProgress, jobError } = useAppStore()
+  const { config, updateConfig, fileId, jobStatus, jobProgress, jobError, setActiveTab, openDemos } = useAppStore()
   const { run, isRunning, runError } = useQCRun()
   const { online, loading: healthLoading } = useHealth()
 
@@ -252,8 +252,19 @@ export function Sidebar() {
         )}
       </Section>
 
-      {/* Spacer + Run button */}
-      <div className="mt-auto px-4 py-4 border-t border-line space-y-2">
+      {/* Demos quick link */}
+      <div className="px-4 py-3 border-t border-line">
+        <button
+          onClick={() => fileId ? setActiveTab('Demos') : openDemos()}
+          className="w-full flex items-center gap-2 text-xs text-muted hover:text-tx transition-colors py-1"
+        >
+          <Clapperboard size={13} />
+          Watch demos
+        </button>
+      </div>
+
+      {/* Run button */}
+      <div className="px-4 py-4 border-t border-line space-y-2">
         {isRunning && (
           <div className="w-full bg-line rounded-full h-1">
             <div className="bg-accent h-1 rounded-full transition-all" style={{ width: `${jobProgress || 20}%` }} />

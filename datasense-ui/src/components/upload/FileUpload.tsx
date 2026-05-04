@@ -1,6 +1,6 @@
 import React, { useCallback } from 'react'
 import { useDropzone } from 'react-dropzone'
-import { Upload, FileText, AlertCircle } from 'lucide-react'
+import { Upload, FileText, AlertCircle, X, GitCompare } from 'lucide-react'
 import { useQCRun } from '../../hooks/useQCRun'
 import { useAppStore } from '../../store/appStore'
 
@@ -12,7 +12,7 @@ interface Props {
 
 export function FileUpload({ compact = false }: Props) {
   const { upload, isUploading, uploadError } = useQCRun()
-  const { filename, rowCount, columnCount } = useAppStore()
+  const { filename, rowCount, columnCount, clearFile, setActiveTab } = useAppStore()
 
   const onDrop = useCallback(
     (files: File[]) => { if (files[0]) upload(files[0]) },
@@ -30,10 +30,26 @@ export function FileUpload({ compact = false }: Props) {
 
   if (filename && !isUploading && compact) {
     return (
-      <div className="flex items-center gap-2 px-3 py-2 bg-surface2 border border-line rounded-lg text-sm">
-        <FileText size={14} className="text-accent shrink-0" />
-        <span className="text-tx truncate flex-1">{filename}</span>
-        <span className="text-muted text-xs shrink-0">{rowCount?.toLocaleString()} rows</span>
+      <div className="space-y-1.5">
+        <div className="flex items-center gap-2 px-3 py-2 bg-surface2 border border-line rounded-lg text-sm">
+          <FileText size={14} className="text-accent shrink-0" />
+          <span className="text-tx truncate flex-1 text-xs">{filename}</span>
+          <span className="text-muted text-xs shrink-0">{rowCount?.toLocaleString()}r</span>
+          <button
+            onClick={clearFile}
+            title="Remove file"
+            className="text-muted hover:text-critical transition-colors shrink-0 ml-1"
+          >
+            <X size={12} />
+          </button>
+        </div>
+        <button
+          onClick={() => setActiveTab('Wave Compare')}
+          className="w-full flex items-center gap-1.5 px-3 py-1.5 text-[10px] text-muted hover:text-tx border border-dashed border-line rounded-lg transition-colors hover:border-muted"
+        >
+          <GitCompare size={11} />
+          Compare with another file
+        </button>
       </div>
     )
   }

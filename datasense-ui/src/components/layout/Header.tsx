@@ -1,8 +1,22 @@
 import React from 'react'
-import { Settings } from 'lucide-react'
+import {
+  Settings, ShieldCheck, Braces, TrendingDown, Users,
+  Target, GitCompare, LineChart, Table2, SlidersHorizontal, Clapperboard,
+} from 'lucide-react'
 import { useAppStore } from '../../store/appStore'
 
-const TABS = ['QC Report', 'Logic Checks', 'Straightlining', 'Interviewers', 'Quotas', 'Wave Compare', 'EDA', 'Data Preview', 'Config']
+const TABS: { label: string; icon: React.ElementType }[] = [
+  { label: 'QC Report',      icon: ShieldCheck },
+  { label: 'Logic Checks',   icon: Braces },
+  { label: 'Straightlining', icon: TrendingDown },
+  { label: 'Interviewers',   icon: Users },
+  { label: 'Quotas',         icon: Target },
+  { label: 'Wave Compare',   icon: GitCompare },
+  { label: 'EDA',            icon: LineChart },
+  { label: 'Data Preview',   icon: Table2 },
+  { label: 'Config',         icon: SlidersHorizontal },
+  { label: 'Demos',          icon: Clapperboard },
+]
 
 interface Props { onSettings: () => void }
 
@@ -24,19 +38,20 @@ export function Header({ onSettings }: Props) {
       <div className="flex items-center justify-between px-4">
         {/* Tabs */}
         <nav className="flex overflow-x-auto">
-          {TABS.map((tab) => (
+          {TABS.map(({ label, icon: Icon }) => (
             <button
-              key={tab}
-              onClick={() => setActiveTab(tab)}
+              key={label}
+              onClick={() => setActiveTab(label)}
               className={`
-                px-4 py-3 text-sm whitespace-nowrap border-b-2 transition-colors
-                ${activeTab === tab
+                flex items-center gap-1.5 px-4 py-3 text-sm whitespace-nowrap border-b-2 transition-colors
+                ${activeTab === label
                   ? 'border-accent text-accent'
                   : 'border-transparent text-muted hover:text-tx hover:border-line'
                 }
               `}
             >
-              {tab}
+              <Icon size={13} />
+              {label}
             </button>
           ))}
         </nav>

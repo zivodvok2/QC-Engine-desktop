@@ -1,74 +1,182 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Claude Code when working with this repository.
 
-## Commands
+## Project Overview
+
+**Servallab** — CATI survey data Quality Control engine.  
+GitHub: `https://github.com/zivodvok2/QC-Engine-desktop`
+
+The project has **two stacks**:
+
+| Stack | Purpose | Status |
+|---|---|---|
+| React + FastAPI | Primary production UI + API | Active — deployed site |
+| Streamlit (`app.py`) | Legacy local-only UI | Secondary — not deployed |
+
+---
+
+## Running the Project
+
+### Production stack (React + FastAPI)
+
+Run both servers — frontend on 5173, backend on 8000.
 
 ```bash
-# Install dependencies
-pip install -r requirements.txt
+# Backend (FastAPI) — from repo root
+python -m uvicorn api:app --port 8000 --reload
 
-# Run the Streamlit UI
-streamlit run app.py
+# Frontend (React/Vite) — from datasense-ui/
+cd datasense-ui
+npm run dev
+# → http://localhost:5173
+```
 
-# Run CLI (no UI)
+Frontend proxies `/api` → `http://localhost:8000` in dev (configured in `vite.config.ts`).  
+In production set `VITE_API_URL` env var to the deployed backend URL.
+
+### Legacy Streamlit UI
+
+```bash
+python -m streamlit run app.py
+# → http://localhost:8501
+```
+
+### CLI (headless)
+
+```bash
 python main.py --input data/survey.csv --config config/rules.json --output outputs/
+```
 
-# Run all tests
+### Tests
+
+```bash
 pytest tests/
-
-# Run a single test
 pytest tests/test_validations.py::test_duration_check -v
 ```
 
+### Install dependencies
+
+```bash
+# Python
+pip install -r requirements.txt
+
+# Frontend
+cd datasense-ui && npm install
+```
+
+---
+
 ## Architecture
 
-This is a CATI survey data Quality Control engine with two entry points:
-- **`app.py`** — Streamlit UI (the primary interface)
-- **`main.py`** — CLI for headless/batch processing
+### Frontend — `datasense-ui/` (React + TypeScript + Tailwind + Vite)
 
-### Pipeline: Load → Clean → Validate → Report
+```
+datasense-ui/src/
+  App.tsx                     # Root: LandingPage, AppShell, DemosModal, TabContent
+  store/appStore.ts           # Zustand store — file state, job state, config, ui flags
+  components/
+    layout/
+      Sidebar.tsx             # Left panel: file upload, QC config toggles, demos link
+      Header.tsx              # Tab bar with icons (10 tabs)
+    upload/FileUpload.tsx     # Dropzone; compact mode has X (clear) + compare button
+    tabs/
+      QCReport.tsx            Straightlining.tsx  Interviewers.tsx
+      LogicChecks.tsx         EDA.tsx             WaveCompare.tsx
+      Quotas.tsx              DataPreview.tsx     Config.tsx
+      Demos.tsx               # Demo video gallery (10 cards, tag filter, modal on landing)
+    settings/SettingsPanel.tsx
+    onboarding/OnboardingTooltip.tsx
+  api/                        # Axios wrappers: upload.ts, qc.ts, eda.ts, interviewers.ts,
+                              #   compare.ts, ai.ts, client.ts
+  hooks/                      # useQCRun.ts, useColumns.ts, useHealth.ts
+  types/index.ts              # QCConfig, QCResults, DEFAULT_CONFIG
+```
 
-1. **`core/loader.py`** — ingests CSV/XLSX/SAV into a DataFrame (`load()` for file paths, `load_from_buffer()` for Streamlit uploads)
-2. **`core/cleaner.py`** — normalises nulls and coerces types
-3. **`core/rule_engine.py`** (`RuleEngine`) — reads a config dict or JSON file, instantiates check objects, and calls `.run(df)` on each
-4. **`core/reporter.py`** — generates Excel/CSV output; the Streamlit UI uses `build_report()` in `app.py` directly instead
+Key UX behaviours:
+- **No file loaded**: landing page shown; Demos opens as a modal overlay (X to close, click-outside closes)
+- **File loaded**: full header tab bar; Demos is a regular tab; X button on file clears state without refresh; "Compare with another file" navigates to Wave Compare tab
+- `clearFile()` in store resets file/job/results but **keeps config**
+- `reset()` resets everything including config
 
-### Check System
+### Backend — `api.py` + `routers/` (FastAPI + Python)
 
-All checks extend `BaseCheck` (`core/validator.py`) and return a `CheckResult`. The `CheckResult` carries:
-- `flagged_rows` — a DataFrame of problematic rows (internal columns prefixed with `_`)
+```
+api.py              # FastAPI app, CORS, lifespan (temp-file cleanup every 3600s)
+routers/
+  qc.py             # POST /api/upload, POST /api/run, GET /api/job/{id}
+  eda.py            # POST /api/eda/summary, /api/eda/distribution, /api/eda/correlation
+  interviewers.py   # POST /api/interviewers/risk
+  compare.py        # POST /api/compare/upload-wave2, /api/compare/diff, /api/compare/interviewer-shift
+  ai.py             # POST /api/ai/suggest-rules (Groq)
+schemas.py          # Pydantic request/response models
+job_store.py        # In-memory job registry + UPLOAD_DIR / REPORTS_DIR paths
+```
+
+Uploaded files live in a temp directory and are auto-deleted after 1 hour.
+
+### QC Pipeline — `core/` + `checks/`
+
+Pipeline: **Load → Clean → Validate → Report**
+
+1. `core/loader.py` — ingests CSV/XLSX/SAV → DataFrame
+2. `core/cleaner.py` — normalises nulls, coerces types
+3. `core/rule_engine.py` (`RuleEngine`) — reads config, instantiates checks, calls `.run(df)`
+4. `core/reporter.py` — Excel/CSV output (Streamlit path); React gets JSON from API
+
+All checks extend `BaseCheck` (`core/validator.py`) and return `CheckResult`:
+- `flagged_rows` — DataFrame of bad rows (internal cols prefixed `_`)
 - `severity` — `"info"` | `"warning"` | `"critical"`
-- `metadata` — a dict with check-specific stats
+- `metadata` — check-specific stats dict
 
 Check modules:
-- **`checks/missing_checks.py`** — `MissingValueCheck`, `HighMissingColumnCheck`
-- **`checks/range_checks.py`** — `RangeCheck`, `DurationCheck`
-- **`checks/logic_checks.py`** — `LogicCheck` (rich multi-condition IF/THEN), `DuplicateCheck`; exports `_evaluate_condition()` which is reused by `advanced_checks.py`
-- **`checks/pattern_checks.py`** — `PatternCheck` (regex), `AnomalyCheck` (IQR outliers)
-- **`checks/advanced_checks.py`** — `StraightliningCheck`, `InterviewerDurationCheck`, `InterviewerProductivityCheck`, `ConsentEligibilityCheck`, `FabricationCheck`
+- `checks/missing_checks.py` — `MissingValueCheck`, `HighMissingColumnCheck`
+- `checks/range_checks.py` — `RangeCheck`, `DurationCheck`
+- `checks/logic_checks.py` — `LogicCheck` (multi-condition IF/THEN), `DuplicateCheck`; exports `_evaluate_condition()` reused by `advanced_checks.py`
+- `checks/pattern_checks.py` — `PatternCheck` (regex), `AnomalyCheck` (IQR)
+- `checks/advanced_checks.py` — `StraightliningCheck`, `InterviewerDurationCheck`, `InterviewerProductivityCheck`, `ConsentEligibilityCheck`, `FabricationCheck`
+- `checks/verbatim_checks.py` — Groq AI grammar scoring
+- `checks/consistency_checks.py` — cross-column consistency
 
 ### Adding a New Check
 
-1. Create a class in the appropriate `checks/` module extending `BaseCheck`
-2. Set class attributes `name`, `issue_type`, `severity`
+1. Add class in appropriate `checks/` module extending `BaseCheck`
+2. Set `name`, `issue_type`, `severity` class attrs
 3. Implement `run(self, df) -> CheckResult` using `self._make_result(flagged_df, metadata)`
-4. Register it in `RuleEngine._build_checks()` in `core/rule_engine.py`
+4. Register in `RuleEngine._build_checks()` in `core/rule_engine.py`
+5. Add a corresponding API endpoint in `routers/qc.py` if it needs separate exposure
 
 ### Logic Rule Format
-
-`config/rules.json` uses a legacy single-condition format. The `LogicCheck` also supports a rich multi-condition format (used by the UI):
 
 ```json
 {
   "description": "Under-18 should not have a salary",
-  "if_conditions":   [{"column": "age",    "operator": "<",       "value": 18}],
+  "if_conditions":   [{"column": "age",    "operator": "<",  "value": 18}],
   "then_conditions": [{"column": "salary", "operator": "is_null"}]
 }
 ```
 
 Supported operators: `>`, `<`, `>=`, `<=`, `==`, `!=`, `is_null`, `not_null`, `is_numeric`, `is_string`, `in_list`, `not_in_list`.
 
-### Config
+---
 
-`RuleEngine` accepts either a `config_path` (JSON file) or a `config` dict directly. The Streamlit UI passes a dict built from session state, merging sidebar-defined logic rules with `st.session_state.custom_logic_rules`. The default config shape is defined in `DEFAULT_CONFIG` at the top of `app.py`.
+## Demo Videos
+
+Demo cards live in `datasense-ui/src/components/tabs/Demos.tsx`.  
+To add a real video, set the `video` field on a `DEMO` entry to a local path or URL:
+
+```ts
+{ title: 'Uploading Your Data', video: 'demos/upload.mp4' }   // local file
+{ title: 'Uploading Your Data', video: 'https://youtu.be/XYZ' } // YouTube
+```
+
+`st.video()` / `<video>` handle both. Until set, cards show a "Coming soon" placeholder.
+
+---
+
+## Deployment
+
+- Repo: `https://github.com/zivodvok2/QC-Engine-desktop`
+- Frontend built with `npm run build` → `datasense-ui/dist/`
+- Backend deployed separately (Render/Fly); set `VITE_API_URL` to point the frontend at it
+- Streamlit app (`app.py`) is **not** part of the deployed stack

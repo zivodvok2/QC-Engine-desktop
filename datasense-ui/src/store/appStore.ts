@@ -31,6 +31,7 @@ interface AppState {
 
   // ui
   activeTab: string
+  demosOpen: boolean
 
   // actions
   setFile: (data: UploadResponse) => void
@@ -42,6 +43,9 @@ interface AppState {
   updateConfig: (patch: Partial<QCConfig>) => void
   setGroqApiKey: (key: string) => void
   setActiveTab: (tab: string) => void
+  openDemos: () => void
+  closeDemos: () => void
+  clearFile: () => void
   reset: () => void
 }
 
@@ -63,6 +67,7 @@ export const useAppStore = create<AppState>((set) => ({
   config: structuredClone(DEFAULT_CONFIG),
   groqApiKey: localStorage.getItem('ds_groq_api_key') ?? '',
   activeTab: 'QC Report',
+  demosOpen: false,
 
   setFile: (data) =>
     set({
@@ -98,6 +103,17 @@ export const useAppStore = create<AppState>((set) => ({
   },
 
   setActiveTab: (tab) => set({ activeTab: tab }),
+
+  openDemos: () => set({ demosOpen: true }),
+  closeDemos: () => set({ demosOpen: false }),
+
+  clearFile: () =>
+    set({
+      fileId: null, filename: null, rowCount: null, columnCount: null,
+      columnNames: [], dtypes: {}, previewRows: [],
+      jobId: null, jobStatus: 'idle', jobProgress: 0, jobError: null,
+      results: null, activeTab: 'QC Report',
+    }),
 
   reset: () =>
     set({

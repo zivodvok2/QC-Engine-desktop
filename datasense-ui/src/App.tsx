@@ -1,8 +1,9 @@
 import React, { useState } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import {
-  ShieldCheck, BarChart2, Braces, Copy, TrendingDown,
-  Users, MessageSquare, LineChart, Upload,
+  ShieldCheck, Braces, TrendingDown, Users, Target,
+  GitCompare, LineChart, Table2, SlidersHorizontal,
+  Clapperboard, X,
 } from 'lucide-react'
 import { Sidebar } from './components/layout/Sidebar'
 import { Header } from './components/layout/Header'
@@ -16,6 +17,7 @@ import { Config } from './components/tabs/Config'
 import { Interviewers } from './components/tabs/Interviewers'
 import { WaveCompare } from './components/tabs/WaveCompare'
 import { Quotas } from './components/tabs/Quotas'
+import { Demos } from './components/tabs/Demos'
 import { OnboardingTooltip } from './components/onboarding/OnboardingTooltip'
 import { SettingsPanel } from './components/settings/SettingsPanel'
 import { useAppStore } from './store/appStore'
@@ -25,17 +27,52 @@ const qc = new QueryClient({
 })
 
 const FEATURE_CARDS = [
-  { Icon: ShieldCheck,   title: 'Missing Value Checks',     desc: 'Flag respondents and columns exceeding configurable missing thresholds.' },
-  { Icon: BarChart2,     title: 'Range Validation',         desc: 'Detect numeric values outside expected bounds per variable.' },
-  { Icon: Braces,        title: 'Logic Checks',             desc: 'Custom IF / THEN rules to catch invalid conditional patterns.' },
-  { Icon: Copy,          title: 'Duplicate Detection',      desc: 'Identify exact and near-duplicate records across key identifiers.' },
-  { Icon: TrendingDown,  title: 'Straightlining',           desc: 'Flag respondents giving identical answers across rating scales.' },
-  { Icon: Users,         title: 'Interviewer QC',           desc: 'Duration anomalies, productivity outliers, and fabrication signals.' },
-  { Icon: MessageSquare, title: 'Verbatim Quality',         desc: 'AI-scored open-ended responses for relevance and depth.' },
-  { Icon: LineChart,     title: 'EDA & Visualisation',      desc: 'Interactive charts and summary statistics across your dataset.' },
+  { icon: ShieldCheck,       tab: 'QC Report',      desc: 'Missing values, range violations, duplicates, and fabrication flags in one report.' },
+  { icon: Braces,            tab: 'Logic Checks',   desc: 'Custom IF / THEN rules to catch invalid conditional patterns.' },
+  { icon: TrendingDown,      tab: 'Straightlining', desc: 'Flag respondents giving identical answers across rating scale batteries.' },
+  { icon: Users,             tab: 'Interviewers',   desc: 'Duration anomalies, productivity outliers, and fabrication signals per interviewer.' },
+  { icon: Target,            tab: 'Quotas',         desc: 'Real-time target vs achieved tracking with RAG cell colouring.' },
+  { icon: GitCompare,        tab: 'Wave Compare',   desc: 'Compare two waves to detect drift, new interviewers, and changed values.' },
+  { icon: LineChart,         tab: 'EDA',            desc: 'Interactive frequency plots, distributions, correlations, and cross-tabs.' },
+  { icon: Table2,            tab: 'Data Preview',   desc: 'Browse the cleaned dataset with column filtering and pagination.' },
+  { icon: SlidersHorizontal, tab: 'Config',         desc: 'View active config and the full audit trail of every QC run.' },
+  { icon: Clapperboard,      tab: 'Demos',          desc: 'Short video walkthroughs for every feature — no file needed.' },
 ]
 
+function DemosModal() {
+  const { closeDemos } = useAppStore()
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+      onClick={(e) => { if (e.target === e.currentTarget) closeDemos() }}
+    >
+      <div className="bg-surface border border-line rounded-xl w-full max-w-5xl max-h-[85vh] flex flex-col shadow-2xl">
+        {/* Modal header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-line shrink-0">
+          <div className="flex items-center gap-2">
+            <Clapperboard size={16} className="text-accent" />
+            <span className="font-display font-bold text-sm text-tx">Demo Videos</span>
+          </div>
+          <button
+            onClick={closeDemos}
+            className="p-1.5 text-muted hover:text-tx hover:bg-surface2 rounded transition-colors"
+            title="Close"
+          >
+            <X size={16} />
+          </button>
+        </div>
+        {/* Modal body */}
+        <div className="overflow-y-auto p-6">
+          <Demos />
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function LandingPage() {
+  const { openDemos } = useAppStore()
+
   return (
     <div className="flex flex-col items-center justify-center min-h-full px-6 py-16 space-y-12">
       {/* Hero */}
@@ -55,16 +92,30 @@ function LandingPage() {
       </div>
 
       {/* Feature grid */}
-      <div className="w-full max-w-4xl grid grid-cols-2 sm:grid-cols-4 gap-4">
-        {FEATURE_CARDS.map(({ Icon, title, desc }) => (
-          <div key={title} className="card p-4 space-y-2 hover:border-muted transition-colors">
-            <div className="w-8 h-8 bg-surface2 rounded flex items-center justify-center">
-              <Icon size={16} className="text-accent" />
-            </div>
-            <p className="text-sm font-medium text-tx leading-snug">{title}</p>
-            <p className="text-xs text-muted leading-relaxed">{desc}</p>
-          </div>
-        ))}
+      <div className="w-full max-w-5xl space-y-3">
+        <p className="text-xs text-muted uppercase tracking-wider text-center">What's inside</p>
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+          {FEATURE_CARDS.map(({ icon: Icon, tab, desc }) => (
+            <button
+              key={tab}
+              onClick={tab === 'Demos' ? openDemos : undefined}
+              className="card p-4 space-y-2 hover:border-muted transition-colors text-left group"
+            >
+              <div className="w-8 h-8 bg-surface2 rounded flex items-center justify-center group-hover:bg-accent/10 transition-colors">
+                <Icon size={15} className="text-accent" />
+              </div>
+              <p className="text-sm font-medium text-tx leading-snug">{tab}</p>
+              <p className="text-xs text-muted leading-relaxed">{desc}</p>
+            </button>
+          ))}
+        </div>
+        <p className="text-[10px] text-muted text-center pt-1">
+          Upload a file above to unlock all tabs, or{' '}
+          <button onClick={openDemos} className="text-accent underline underline-offset-2">
+            watch demos
+          </button>{' '}
+          first.
+        </p>
       </div>
     </div>
   )
@@ -83,12 +134,13 @@ function TabContent() {
       {activeTab === 'EDA'            && <EDA />}
       {activeTab === 'Data Preview'   && <DataPreview />}
       {activeTab === 'Config'         && <Config />}
+      {activeTab === 'Demos'          && <Demos />}
     </div>
   )
 }
 
 function AppShell() {
-  const { fileId } = useAppStore()
+  const { fileId, demosOpen } = useAppStore()
   const [showSettings, setShowSettings] = useState(false)
 
   return (
@@ -107,6 +159,7 @@ function AppShell() {
         )}
       </div>
       {showSettings && <SettingsPanel onClose={() => setShowSettings(false)} />}
+      {demosOpen && !fileId && <DemosModal />}
     </div>
   )
 }
