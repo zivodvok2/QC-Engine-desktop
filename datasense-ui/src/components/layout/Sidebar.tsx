@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { Play, ChevronDown, ChevronRight, Sparkles, AlertCircle, Wifi, WifiOff, Clapperboard, Eye, EyeOff, Settings, Mail, RotateCcw } from 'lucide-react'
+import { Play, ChevronDown, ChevronRight, Sparkles, AlertCircle, Wifi, WifiOff, Clapperboard, Eye, EyeOff, Settings, Mail, RotateCcw, Info } from 'lucide-react'
 import { FileUpload } from '../upload/FileUpload'
 import { relaunchOnboarding } from '../onboarding/OnboardingTooltip'
 import { useAppStore } from '../../store/appStore'
@@ -56,6 +56,7 @@ export function Sidebar() {
           groqApiKey, setGroqApiKey } = useAppStore()
   const [showKey, setShowKey] = useState(false)
   const [localKey, setLocalKey] = useState(groqApiKey)
+  const [aboutOpen, setAboutOpen] = useState(false)
   const { run, isRunning, runError } = useQCRun()
   const { online, loading: healthLoading } = useHealth()
 
@@ -340,13 +341,21 @@ export function Sidebar() {
           </div>
         </div>
 
-        {/* About */}
+        {/* About — collapsible */}
         <div className="space-y-1.5">
-          <p className="text-xs text-muted uppercase tracking-wider">About</p>
-          <p className="text-xs text-muted leading-relaxed">
-            Servallab is a survey QC engine for CATI research teams — detecting missing values,
-            straightlining, interviewer fraud, logic violations, and more before sign-off.
-          </p>
+          <button
+            onClick={() => setAboutOpen((o) => !o)}
+            className="w-full flex items-center justify-between text-xs text-muted uppercase tracking-wider hover:text-tx transition-colors"
+          >
+            <span className="flex items-center gap-1.5"><Info size={11} />About</span>
+            {aboutOpen ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+          </button>
+          {aboutOpen && (
+            <p className="text-xs text-muted leading-relaxed pt-1">
+              Servallab is a survey QC engine for CATI research teams — detecting missing values,
+              straightlining, interviewer fraud, logic violations, and more before sign-off.
+            </p>
+          )}
         </div>
 
         {/* Contact / actions */}
