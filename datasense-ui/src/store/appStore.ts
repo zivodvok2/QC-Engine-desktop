@@ -1,6 +1,11 @@
 import { create } from 'zustand'
 import type { QCConfig, QCResults, UploadResponse } from '../types'
 import { DEFAULT_CONFIG } from '../types'
+import {
+  type SavedProfile,
+  loadProfiles,
+  persistProfiles,
+} from '../utils/configProfiles'
 
 type JobStatus = 'idle' | 'queued' | 'running' | 'complete' | 'failed'
 
@@ -36,6 +41,9 @@ interface AppState {
   theme: 'dark' | 'light' | 'midnight'
   accent: 'emerald' | 'blue' | 'purple' | 'orange' | 'pink'
 
+  // saved profiles
+  savedProfiles: SavedProfile[]
+
   // actions
   setFile: (data: UploadResponse) => void
   setPreview: (rows: Record<string, unknown>[], dtypes: Record<string, string>) => void
@@ -44,6 +52,7 @@ interface AppState {
   setJobError: (err: string) => void
   setResults: (r: QCResults) => void
   updateConfig: (patch: Partial<QCConfig>) => void
+  loadConfig: (config: QCConfig) => void
   setGroqApiKey: (key: string) => void
   setActiveTab: (tab: string) => void
   openDemos: () => void
@@ -52,6 +61,8 @@ interface AppState {
   closeSettings: () => void
   setTheme: (t: 'dark' | 'light' | 'midnight') => void
   setAccent: (a: 'emerald' | 'blue' | 'purple' | 'orange' | 'pink') => void
+  saveProfile: (name: string) => void
+  deleteProfile: (name: string) => void
   clearFile: () => void
   reset: () => void
 }
@@ -72,6 +83,7 @@ export const useAppStore = create<AppState>((set) => ({
 
   results: null,
   config: structuredClone(DEFAULT_CONFIG),
+  savedProfiles: loadProfiles(),
   groqApiKey: localStorage.getItem('ds_groq_api_key') ?? '',
   activeTab: 'QC Report',
   demosOpen: false,
@@ -106,6 +118,26 @@ export const useAppStore = create<AppState>((set) => ({
 
   updateConfig: (patch) =>
     set((s) => ({ config: { ...s.config, ...patch } })),
+
+  loadConfig: (config) => set({ config }),
+
+  saveProfile: (name) =>
+    set((s) => {
+      const existing = s.savedProfiles.filter((p) => p.name !== name)
+      const updated: SavedProfile[] = [
+        { name, config: structuredClone(s.config), savedAt: new Date().toISOString() },
+        ...existing,
+      ]
+      persistProfiles(updated)
+      return { savedProfiles: updated }
+    }),
+
+  deleteProfile: (name) =>
+    set((s) => {
+      const updated = s.savedProfiles.filter((p) => p.name !== name)
+      persistProfiles(updated)
+      return { savedProfiles: updated }
+    }),
 
   setGroqApiKey: (key) => {
     localStorage.setItem('ds_groq_api_key', key)

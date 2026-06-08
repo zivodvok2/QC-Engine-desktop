@@ -9,7 +9,7 @@ import { useHealth } from '../../hooks/useHealth'
 const GROQ_MODELS = [
   'llama-3.1-8b-instant',
   'llama-3.3-70b-versatile',
-  'mixtral-8x7b-32768',
+  'llama3-8b-8192',
   'gemma2-9b-it',
 ]
 
@@ -243,6 +243,22 @@ export function Sidebar() {
         </div>
         {config.verbatim_check.enabled && (
           <div className="space-y-2 pl-2 border-l border-line">
+            <Field label="Verbatim columns (comma-separated)">
+              <input
+                type="text"
+                className="w-full text-xs"
+                value={config.verbatim_check.verbatim_columns.join(', ')}
+                onChange={(e) =>
+                  updNested('verbatim_check', {
+                    verbatim_columns: e.target.value
+                      .split(',')
+                      .map((s) => s.trim())
+                      .filter(Boolean),
+                  })
+                }
+                placeholder="comment, feedback, open_text"
+              />
+            </Field>
             <Field label="Model">
               <select
                 className="w-full"

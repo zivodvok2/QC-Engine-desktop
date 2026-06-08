@@ -1,7 +1,9 @@
 import React, { useState } from 'react'
-import { Download, ChevronDown, ChevronUp, AlertTriangle, Info, XCircle, Activity } from 'lucide-react'
+import { useMutation } from '@tanstack/react-query'
+import { Download, ChevronDown, ChevronUp, Info, XCircle, Activity, Sparkles, FileText } from 'lucide-react'
 import { useAppStore } from '../../store/appStore'
 import { downloadReport } from '../../api/qc'
+import { explainFlags, generateQCSummary } from '../../api/ai'
 import type { CheckResult } from '../../types'
 
 const SEV_ORDER: Record<string, number> = { critical: 0, warning: 1, info: 2 }
@@ -15,9 +17,22 @@ function MetricCard({ label, value, color }: { label: string; value: number | st
   )
 }
 
-function CheckAccordion({ check, totalFlags }: { check: CheckResult; totalFlags: number }) {
+function CheckAccordion({
+  check,
+  totalFlags,
+  totalRows,
+  groqApiKey,
+  model,
+}: {
+  check: CheckResult
+  totalFlags: number
+  totalRows: number
+  groqApiKey: string
+  model: string
+}) {
   const [open, setOpen] = useState(false)
   const [page, setPage] = useState(0)
+  const [explanation, setExplanation] = useState('')
   const PAGE_SIZE = 25
   const pct = totalFlags > 0 ? ((check.flag_count / totalFlags) * 100).toFixed(1) : '0'
   const rows = check.flagged_rows.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)
@@ -26,6 +41,21 @@ function CheckAccordion({ check, totalFlags }: { check: CheckResult; totalFlags:
 
   const sev = check.severity
   const badgeClass = sev === 'critical' ? 'badge-critical' : sev === 'warning' ? 'badge-warning' : 'badge-info'
+
+  const explainMutation = useMutation({
+    mutationFn: () =>
+      explainFlags(
+        check.check_name,
+        check.severity,
+        check.flag_count,
+        totalRows,
+        check.flagged_rows.slice(0, 5),
+        {},
+        groqApiKey,
+        model,
+      ),
+    onSuccess: (data) => setExplanation(data.explanation),
+  })
 
   return (
     <div className="card border-line">
@@ -41,6 +71,28 @@ function CheckAccordion({ check, totalFlags }: { check: CheckResult; totalFlags:
 
       {open && check.flag_count > 0 && (
         <div className="border-t border-line px-4 pb-4 pt-3 space-y-3">
+          {/* AI Explain button */}
+          {groqApiKey && (
+            <div className="space-y-2">
+              <button
+                onClick={() => explainMutation.mutate()}
+                disabled={explainMutation.isPending}
+                className="btn-ghost flex items-center gap-1.5 text-xs"
+              >
+                <Sparkles size={11} className="text-accent" />
+                {explainMutation.isPending ? 'Explaining…' : 'Explain with AI'}
+              </button>
+              {explainMutation.isError && (
+                <p className="text-xs text-critical">{(explainMutation.error as Error).message}</p>
+              )}
+              {explanation && (
+                <div className="p-3 rounded-lg bg-accent/5 border border-accent/20 text-xs text-tx leading-relaxed whitespace-pre-wrap">
+                  {explanation}
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead>
@@ -81,8 +133,25 @@ function CheckAccordion({ check, totalFlags }: { check: CheckResult; totalFlags:
 }
 
 export function QCReport() {
-  const { results, jobId, jobStatus, jobError } = useAppStore()
+  const { results, jobId, jobStatus, jobError, rowCount, groqApiKey, config } = useAppStore()
   const [downloading, setDownloading] = useState(false)
+  const [summary, setSummary] = useState('')
+
+  const summaryMutation = useMutation({
+    mutationFn: () =>
+      generateQCSummary(
+        results!.total_flags,
+        rowCount ?? 0,
+        results!.checks.map((c) => ({
+          check_name: c.check_name,
+          severity: c.severity,
+          flag_count: c.flag_count,
+        })),
+        groqApiKey,
+        config.verbatim_check.model,
+      ),
+    onSuccess: (data) => setSummary(data.summary),
+  })
 
   const handleDownload = async () => {
     if (!jobId) return
@@ -133,6 +202,37 @@ export function QCReport() {
         <MetricCard label="Info" value={results.flagged_by_severity.info ?? 0} color="text-info" />
       </div>
 
+      {/* AI Summary */}
+      {groqApiKey && (
+        <div className="card p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-medium text-tx flex items-center gap-1.5">
+              <FileText size={14} className="text-accent" />
+              AI Executive Summary
+            </h3>
+            <button
+              onClick={() => summaryMutation.mutate()}
+              disabled={summaryMutation.isPending}
+              className="btn-ghost flex items-center gap-1.5 text-xs"
+            >
+              <Sparkles size={11} className="text-accent" />
+              {summaryMutation.isPending ? 'Generating…' : summary ? 'Regenerate' : 'Generate summary'}
+            </button>
+          </div>
+          {summaryMutation.isError && (
+            <p className="text-xs text-critical">{(summaryMutation.error as Error).message}</p>
+          )}
+          {summary && (
+            <p className="text-xs text-tx leading-relaxed whitespace-pre-wrap">{summary}</p>
+          )}
+          {!summary && !summaryMutation.isPending && (
+            <p className="text-xs text-muted">
+              Click "Generate summary" to get an AI-written executive narrative of these QC results.
+            </p>
+          )}
+        </div>
+      )}
+
       {/* Download */}
       <div className="flex justify-end">
         <button onClick={handleDownload} disabled={downloading} className="btn-ghost flex items-center gap-2">
@@ -144,7 +244,14 @@ export function QCReport() {
       {/* Check list */}
       <div className="space-y-2">
         {sorted.map((check) => (
-          <CheckAccordion key={check.check_name} check={check} totalFlags={results.total_flags} />
+          <CheckAccordion
+            key={check.check_name}
+            check={check}
+            totalFlags={results.total_flags}
+            totalRows={rowCount ?? 0}
+            groqApiKey={groqApiKey}
+            model={config.verbatim_check.model}
+          />
         ))}
       </div>
 

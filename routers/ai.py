@@ -1,10 +1,11 @@
 """
-routers/ai.py — Groq AI endpoints: NL→rule, feedback letters, data questions
+routers/ai.py — Groq AI endpoints: NL→rule, feedback letters, data questions,
+                flag explanations, QC executive summary
 """
 
-import json
 import asyncio
-from typing import Any, Dict
+import json
+from typing import Any, Dict, List
 
 import requests
 from fastapi import APIRouter, HTTPException
@@ -17,9 +18,23 @@ router = APIRouter()
 
 GROQ_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions"
 
+AVAILABLE_MODELS = [
+    "llama-3.1-8b-instant",
+    "llama-3.3-70b-versatile",
+    "llama3-8b-8192",
+    "gemma2-9b-it",
+]
 
-def _call_groq(prompt: str, api_key: str, model: str = "llama-3.1-8b-instant",
-               temperature: float = 0.3, max_tokens: int = 600) -> str:
+
+def _call_groq(
+    prompt: str,
+    api_key: str,
+    model: str = "llama-3.1-8b-instant",
+    temperature: float = 0.3,
+    max_tokens: int = 600,
+) -> str:
+    if model not in AVAILABLE_MODELS:
+        model = "llama-3.1-8b-instant"
     r = requests.post(
         GROQ_ENDPOINT,
         json={
@@ -29,10 +44,19 @@ def _call_groq(prompt: str, api_key: str, model: str = "llama-3.1-8b-instant",
             "max_tokens": max_tokens,
         },
         headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-        timeout=30,
+        timeout=45,
     )
     r.raise_for_status()
     return r.json()["choices"][0]["message"]["content"].strip()
+
+
+async def _groq(prompt: str, api_key: str, model: str = "llama-3.1-8b-instant",
+                temperature: float = 0.3, max_tokens: int = 600) -> str:
+    """Non-blocking wrapper — runs _call_groq in a thread-pool executor."""
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        None, lambda: _call_groq(prompt, api_key, model, temperature, max_tokens)
+    )
 
 
 # ── Schemas ────────────────────────────────────────────────────────────────────
@@ -57,6 +81,25 @@ class DataQuestionRequest(BaseModel):
     model: str = "llama-3.1-8b-instant"
 
 
+class ExplainFlagsRequest(BaseModel):
+    check_name: str
+    severity: str
+    flag_count: int
+    total_rows: int
+    sample_rows: List[Dict[str, Any]]
+    metadata: Dict[str, Any]
+    groq_api_key: str
+    model: str = "llama-3.1-8b-instant"
+
+
+class QCSummaryRequest(BaseModel):
+    total_flags: int
+    total_rows: int
+    checks: List[Dict[str, Any]]   # [{check_name, severity, flag_count}, ...]
+    groq_api_key: str
+    model: str = "llama-3.1-8b-instant"
+
+
 # ── Endpoints ──────────────────────────────────────────────────────────────────
 
 @router.post("/ai/nl-to-rule")
@@ -77,7 +120,7 @@ async def nl_to_rule(req: NLToRuleRequest):
     )
 
     try:
-        raw = _call_groq(prompt, req.groq_api_key, req.model)
+        raw = await _groq(prompt, req.groq_api_key, req.model)
         start = raw.find("{")
         end = raw.rfind("}") + 1
         if start < 0 or end <= start:
@@ -135,7 +178,7 @@ async def feedback_letter(req: FeedbackLetterRequest):
     )
 
     try:
-        letter = _call_groq(prompt, req.groq_api_key, req.model, temperature=0.35, max_tokens=900)
+        letter = await _groq(prompt, req.groq_api_key, req.model, temperature=0.35, max_tokens=900)
         return {"letter": letter}
     except requests.HTTPError as exc:
         raise HTTPException(status_code=502, detail={"error": f"Groq API error: {exc}"})
@@ -175,8 +218,97 @@ async def data_question(req: DataQuestionRequest):
     )
 
     try:
-        answer = _call_groq(prompt, req.groq_api_key, req.model, temperature=0.2, max_tokens=500)
+        answer = await _groq(prompt, req.groq_api_key, req.model, temperature=0.2, max_tokens=500)
         return {"answer": answer}
+    except requests.HTTPError as exc:
+        raise HTTPException(status_code=502, detail={"error": f"Groq API error: {exc}"})
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail={"error": str(exc)})
+
+
+@router.post("/ai/explain-flags")
+async def explain_flags(req: ExplainFlagsRequest):
+    """Generate a plain-English explanation of flagged rows for a single QC check."""
+    if not req.groq_api_key:
+        raise HTTPException(status_code=400, detail={"error": "Groq API key required"})
+
+    flag_pct = round(req.flag_count / max(req.total_rows, 1) * 100, 1)
+    sample_text = ""
+    if req.sample_rows:
+        cols = list(req.sample_rows[0].keys())[:8]
+        header = " | ".join(cols)
+        rows = "\n".join(
+            " | ".join(str(r.get(c, ""))[:30] for c in cols)
+            for r in req.sample_rows[:5]
+        )
+        sample_text = f"\nSample flagged rows ({min(5, len(req.sample_rows))} of {req.flag_count}):\n{header}\n{rows}"
+
+    meta_text = ""
+    if req.metadata:
+        safe_meta = {k: v for k, v in req.metadata.items()
+                     if not isinstance(v, (list, dict)) and k != "status"}
+        if safe_meta:
+            meta_text = "\nCheck metadata: " + ", ".join(f"{k}={v}" for k, v in safe_meta.items())
+
+    prompt = (
+        "You are a survey QC analyst. Explain in plain English what the following QC check found "
+        "and what action a data manager should take.\n\n"
+        f"Check: {req.check_name.replace('_', ' ')}\n"
+        f"Severity: {req.severity}\n"
+        f"Flags: {req.flag_count} out of {req.total_rows} records ({flag_pct}%)"
+        f"{meta_text}"
+        f"{sample_text}\n\n"
+        "Write 2-3 short paragraphs:\n"
+        "1. What this check detected and why it matters for data quality\n"
+        "2. What the flagged data likely indicates (patterns, root causes)\n"
+        "3. Recommended next steps for the data manager\n\n"
+        "Be specific, practical, and concise. No bullet points. Plain paragraph form."
+    )
+
+    try:
+        explanation = await _groq(prompt, req.groq_api_key, req.model, temperature=0.25, max_tokens=450)
+        return {"explanation": explanation}
+    except requests.HTTPError as exc:
+        raise HTTPException(status_code=502, detail={"error": f"Groq API error: {exc}"})
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail={"error": str(exc)})
+
+
+@router.post("/ai/qc-summary")
+async def qc_summary(req: QCSummaryRequest):
+    """Generate an executive-level QC summary narrative from full check results."""
+    if not req.groq_api_key:
+        raise HTTPException(status_code=400, detail={"error": "Groq API key required"})
+
+    flag_rate = round(req.total_flags / max(req.total_rows, 1) * 100, 1)
+
+    critical = [c for c in req.checks if c.get("severity") == "critical" and c.get("flag_count", 0) > 0]
+    warnings  = [c for c in req.checks if c.get("severity") == "warning"  and c.get("flag_count", 0) > 0]
+    info      = [c for c in req.checks if c.get("severity") == "info"     and c.get("flag_count", 0) > 0]
+
+    def _fmt(checks_list):
+        return ", ".join(
+            f"{c['check_name'].replace('_', ' ')} ({c['flag_count']} flags)"
+            for c in checks_list[:6]
+        ) or "none"
+
+    prompt = (
+        "You are a senior survey quality control manager writing an executive summary of an automated QC report.\n\n"
+        f"Dataset: {req.total_rows:,} records, {len(req.checks)} checks run\n"
+        f"Total flags: {req.total_flags:,} ({flag_rate}% of records)\n\n"
+        f"Critical issues: {_fmt(critical)}\n"
+        f"Warnings: {_fmt(warnings)}\n"
+        f"Info: {_fmt(info)}\n\n"
+        "Write an executive QC summary in 3 paragraphs:\n"
+        "1. Overall data quality verdict — is this dataset fit for analysis?\n"
+        "2. The most important findings that require immediate attention\n"
+        "3. Recommended remediation steps before data sign-off\n\n"
+        "Write for a non-technical research director. Plain English. Decisive tone. No bullet points."
+    )
+
+    try:
+        summary = await _groq(prompt, req.groq_api_key, req.model, temperature=0.25, max_tokens=500)
+        return {"summary": summary}
     except requests.HTTPError as exc:
         raise HTTPException(status_code=502, detail={"error": f"Groq API error: {exc}"})
     except Exception as exc:

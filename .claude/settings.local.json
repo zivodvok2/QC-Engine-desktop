@@ -6,7 +6,30 @@
       "Bash(git add *)",
       "Bash(git commit -m ' *)",
       "Bash(git push *)",
-      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:8501)"
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:8501)",
+      "Bash(pip show *)",
+      "Bash(npm run *)",
+      "Bash(npx tsc *)",
+      "Bash(node_modules/.bin/tsc --noEmit)",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\(json.dumps\\(d.get\\('devDependencies',{}\\), indent=2\\)\\)\")",
+      "Bash(python3 -m uvicorn api:app --port 8000 --reload)",
+      "Bash(echo \"Backend PID: $!\")",
+      "Bash(npm install *)",
+      "Bash(curl -s http://localhost:8000/api/health)",
+      "Bash(pip3 install *)",
+      "Bash(curl -s http://localhost:8000/)",
+      "Bash(echo \"Frontend PID: $!\")",
+      "Bash(xvfb-run --auto-servernum google-chrome --headless=new --no-sandbox --disable-gpu --window-size=1400,900 --screenshot=/tmp/app_landing.png http://localhost:5173/)",
+      "Bash(echo \"exit: $?\")",
+      "Bash(xvfb-run --help)",
+      "Bash(google-chrome --headless=new --no-sandbox --disable-gpu --window-size=1400,900 --screenshot=/tmp/app_landing.png http://localhost:5173/)",
+      "Bash(google-chrome --headless=new --no-sandbox --disable-gpu --window-size=1400,900 --screenshot=/tmp/presentation.png http://localhost:5173/presentation.html)",
+      "Bash(python3 -c \"import pptx; print\\(pptx.__version__\\)\")",
+      "Bash(pip install *)",
+      "Bash(python3 *)",
+      "Bash(curl -s http://localhost:8000/docs)",
+      "Bash(google-chrome --headless --no-sandbox --disable-gpu --screenshot=/tmp/app_screenshot.png --window-size=1600,900 http://localhost:5173/)",
+      "Bash(echo \"Exit: $?\")"
     ]
   }
 }

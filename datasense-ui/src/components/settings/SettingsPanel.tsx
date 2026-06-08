@@ -8,7 +8,7 @@ const APP_VERSION = '2.0.0'
 const GROQ_MODELS = [
   'llama-3.1-8b-instant',
   'llama-3.3-70b-versatile',
-  'mixtral-8x7b-32768',
+  'llama3-8b-8192',
   'gemma2-9b-it',
 ]
 
