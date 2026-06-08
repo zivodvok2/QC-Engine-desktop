@@ -166,11 +166,9 @@ function AppShell() {
     <div className="flex h-full">
       <Sidebar />
       <div className="flex-1 flex flex-col overflow-hidden">
-        {fileId ? (
-          <>
-            <Header onSettings={openSettings} />
-            <TabContent />
-          </>
+        <Header onSettings={openSettings} />
+        {fileId || activeTab === 'Config' ? (
+          <TabContent />
         ) : (
           <main className="flex-1 overflow-auto">
             <LandingPage />

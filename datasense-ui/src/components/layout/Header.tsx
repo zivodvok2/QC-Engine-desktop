@@ -20,8 +20,11 @@ const TABS: { label: string; icon: React.ElementType }[] = [
 
 interface Props { onSettings: () => void }
 
+const PRE_FILE_TABS = new Set(['Config', 'Demos'])
+
 export function Header({ onSettings }: Props) {
-  const { activeTab, setActiveTab, jobStatus, jobProgress } = useAppStore()
+  const { activeTab, setActiveTab, jobStatus, jobProgress, fileId } = useAppStore()
+  const visibleTabs = fileId ? TABS : TABS.filter(t => PRE_FILE_TABS.has(t.label))
 
   return (
     <header className="bg-surface border-b border-line shrink-0">
@@ -38,7 +41,7 @@ export function Header({ onSettings }: Props) {
       <div className="flex items-center justify-between px-4">
         {/* Tabs */}
         <nav className="flex overflow-x-auto">
-          {TABS.map(({ label, icon: Icon }) => (
+          {visibleTabs.map(({ label, icon: Icon }) => (
             <button
               key={label}
               onClick={() => setActiveTab(label)}
