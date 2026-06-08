@@ -160,7 +160,7 @@ function TabContent() {
 }
 
 function AppShell() {
-  const { fileId, demosOpen, settingsOpen, openSettings, closeSettings } = useAppStore()
+  const { fileId, activeTab, demosOpen, settingsOpen, openSettings, closeSettings } = useAppStore()
 
   return (
     <div className="flex h-full">
