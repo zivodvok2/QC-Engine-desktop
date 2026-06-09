@@ -44,8 +44,18 @@ class RuleEngine:
         # ── Missing ──────────────────────────────────────────────────────────
         threshold = cfg.get("missing_threshold")
         if threshold is not None:
-            self.checks.append(MissingValueCheck(threshold=threshold))
-            self.checks.append(HighMissingColumnCheck(threshold=threshold))
+            include_cols = cfg.get("missing_columns") or []
+            exclude_cols = cfg.get("missing_exclude_columns") or []
+            self.checks.append(MissingValueCheck(
+                threshold=threshold,
+                columns=include_cols or None,
+                exclude_columns=exclude_cols,
+            ))
+            self.checks.append(HighMissingColumnCheck(
+                threshold=threshold,
+                columns=include_cols or None,
+                exclude_columns=exclude_cols,
+            ))
 
         # ── Range ────────────────────────────────────────────────────────────
         if cfg.get("range_rules"):

@@ -1,15 +1,15 @@
-import React, { useState } from 'react'
-import { Play, AlertCircle } from 'lucide-react'
+import React from 'react'
+import { Play, AlertCircle, CheckCircle2 } from 'lucide-react'
 import { useMutation } from '@tanstack/react-query'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import { ColumnSelector } from '../columns/ColumnSelector'
-import { runQC, getStatus, getResults } from '../../api/qc'
+import { runQC, getStatus, getResults, addSupplemental } from '../../api/qc'
 import { useAppStore } from '../../store/appStore'
 import type { QCResults } from '../../types'
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
-async function runAndWait(fileId: string, slConfig: QCResults['checks'][0] extends infer _ ? Parameters<typeof runQC>[1] : never): Promise<QCResults> {
+async function runAndWait(fileId: string, slConfig: Parameters<typeof runQC>[1]): Promise<QCResults> {
   const job = await runQC(fileId, slConfig)
   let status = await getStatus(job.job_id)
   while (status.status === 'queued' || status.status === 'running') {
@@ -21,12 +21,8 @@ async function runAndWait(fileId: string, slConfig: QCResults['checks'][0] exten
 }
 
 export function Straightlining() {
-  const { fileId, config } = useAppStore()
-  const [baseVar, setBaseVar] = useState<string[]>([])
-  const [qCols, setQCols] = useState<string[]>([])
-  const [threshold, setThreshold] = useState(0.9)
-  const [minQ, setMinQ] = useState(3)
-  const [result, setResult] = useState<QCResults | null>(null)
+  const { fileId, jobId, config, slTabState, setSlTabState, addSupplementalCheck } = useAppStore()
+  const { baseVar, qCols, threshold, minQ, result } = slTabState
 
   const mutation = useMutation({
     mutationFn: () =>
@@ -40,13 +36,28 @@ export function Straightlining() {
           interviewer_column: baseVar[0] ?? '',
         },
       }),
-    onSuccess: setResult,
+    onSuccess: (data) => {
+      setSlTabState({ result: data })
+      const slCheck = data.checks.find((c) => c.check_name === 'straightlining_check')
+      if (slCheck) {
+        const entry = {
+          check_name: 'straightlining_check',
+          issue_type: 'Straightlining',
+          severity: slCheck.severity,
+          flag_count: slCheck.flag_count,
+          flagged_rows: slCheck.flagged_rows,
+        }
+        // Show immediately in QC Report tab
+        addSupplementalCheck(entry)
+        // Push to backend report
+        if (jobId) addSupplemental(jobId, entry).catch(() => { /* non-blocking */ })
+      }
+    },
   })
 
   const slCheck = result?.checks.find((c) => c.check_name === 'straightlining_check')
   const total = result?.total_flags ?? 0
 
-  // Bar chart: flag count per base variable value
   const chartData = (() => {
     if (!slCheck || !baseVar[0]) return []
     const counts: Record<string, number> = {}
@@ -69,32 +80,39 @@ export function Straightlining() {
 
       <div className="card p-4 space-y-4">
         <ColumnSelector label="Base variable (e.g. interviewer ID)" multi={false}
-          selected={baseVar} onChange={setBaseVar} />
+          selected={baseVar} onChange={(v) => setSlTabState({ baseVar: v })} />
 
         <ColumnSelector label="Question columns (rating scales)" multi
-          selected={qCols} onChange={setQCols} />
+          selected={qCols} onChange={(v) => setSlTabState({ qCols: v })} />
 
         <div className="flex flex-wrap gap-4">
           <div className="space-y-1 flex-1 min-w-36">
             <p className="text-xs text-muted">Threshold — {threshold.toFixed(2)}</p>
             <input type="range" min={0.5} max={1} step={0.05} className="w-full" value={threshold}
-              onChange={(e) => setThreshold(parseFloat(e.target.value))} />
+              onChange={(e) => setSlTabState({ threshold: parseFloat(e.target.value) })} />
           </div>
           <div className="space-y-1">
             <p className="text-xs text-muted">Min questions</p>
             <input type="number" className="w-24" min={2} max={50} value={minQ}
-              onChange={(e) => setMinQ(+e.target.value)} />
+              onChange={(e) => setSlTabState({ minQ: +e.target.value })} />
           </div>
         </div>
 
-        <button
-          onClick={() => mutation.mutate()}
-          disabled={!fileId || qCols.length === 0 || mutation.isPending}
-          className="btn-primary flex items-center gap-2"
-        >
-          <Play size={14} />
-          {mutation.isPending ? 'Running…' : 'Run check'}
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => mutation.mutate()}
+            disabled={!fileId || qCols.length === 0 || mutation.isPending}
+            className="btn-primary flex items-center gap-2"
+          >
+            <Play size={14} />
+            {mutation.isPending ? 'Running…' : 'Run check'}
+          </button>
+          {slCheck && !mutation.isPending && (
+            <span className="flex items-center gap-1.5 text-xs text-accent">
+              <CheckCircle2 size={13} /> Added to report
+            </span>
+          )}
+        </div>
 
         {mutation.isError && (
           <div className="flex items-center gap-2 text-critical text-sm">

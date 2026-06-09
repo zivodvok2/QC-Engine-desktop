@@ -133,7 +133,7 @@ function CheckAccordion({
 }
 
 export function QCReport() {
-  const { results, jobId, jobStatus, jobError, rowCount, groqApiKey, config } = useAppStore()
+  const { results, jobId, jobStatus, jobError, rowCount, groqApiKey, config, supplementalChecks } = useAppStore()
   const [downloading, setDownloading] = useState(false)
   const [summary, setSummary] = useState('')
 
@@ -190,13 +190,15 @@ export function QCReport() {
   if (!results) return null
 
   const sorted = [...results.checks].sort((a, b) => (SEV_ORDER[a.severity] ?? 9) - (SEV_ORDER[b.severity] ?? 9))
+  const totalChecks = results.checks.length + supplementalChecks.length
+  const totalFlags = results.total_flags + supplementalChecks.reduce((s, c) => s + c.flag_count, 0)
 
   return (
     <div className="space-y-6 animate-fade-in">
       {/* Metric cards */}
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-        <MetricCard label="Checks run" value={results.checks.length} />
-        <MetricCard label="Total flags" value={results.total_flags} />
+        <MetricCard label="Checks run" value={totalChecks} />
+        <MetricCard label="Total flags" value={totalFlags} />
         <MetricCard label="Critical" value={results.flagged_by_severity.critical ?? 0} color="text-critical" />
         <MetricCard label="Warnings" value={results.flagged_by_severity.warning ?? 0} color="text-warning" />
         <MetricCard label="Info" value={results.flagged_by_severity.info ?? 0} color="text-info" />
@@ -241,24 +243,41 @@ export function QCReport() {
         </button>
       </div>
 
-      {/* Check list */}
+      {/* Main pipeline checks */}
       <div className="space-y-2">
+        <h3 className="text-xs font-semibold text-muted uppercase tracking-wide">Main QC Pipeline</h3>
         {sorted.map((check) => (
           <CheckAccordion
             key={check.check_name}
             check={check}
-            totalFlags={results.total_flags}
+            totalFlags={totalFlags}
             totalRows={rowCount ?? 0}
             groqApiKey={groqApiKey}
             model={config.verbatim_check.model}
           />
         ))}
+        {results.total_flags === 0 && supplementalChecks.length === 0 && (
+          <div className="flex items-center gap-2 text-accent text-sm justify-center py-8">
+            <Info size={16} />
+            No issues found — your data looks clean!
+          </div>
+        )}
       </div>
 
-      {results.total_flags === 0 && (
-        <div className="flex items-center gap-2 text-accent text-sm justify-center py-8">
-          <Info size={16} />
-          No issues found — your data looks clean!
+      {/* Supplemental checks from tabs */}
+      {supplementalChecks.length > 0 && (
+        <div className="space-y-2">
+          <h3 className="text-xs font-semibold text-muted uppercase tracking-wide">Ad-hoc Checks (from tabs)</h3>
+          {supplementalChecks.map((check) => (
+            <CheckAccordion
+              key={check.check_name}
+              check={check}
+              totalFlags={totalFlags}
+              totalRows={rowCount ?? 0}
+              groqApiKey={groqApiKey}
+              model={config.verbatim_check.model}
+            />
+          ))}
         </div>
       )}
     </div>

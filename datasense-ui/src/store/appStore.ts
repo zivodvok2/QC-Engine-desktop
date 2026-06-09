@@ -9,6 +9,51 @@ import {
 
 type JobStatus = 'idle' | 'queued' | 'running' | 'complete' | 'failed'
 
+// ── Tab state types ───────────────────────────────────────────────────────────
+
+export interface IfCondition {
+  id: number
+  col: string
+  op: string
+  val: string
+  connector: 'AND' | 'OR'
+}
+
+export interface RuleBuilderState {
+  id: number
+  if_conditions: IfCondition[]
+  then_cols: string[]
+  then_op: string
+  then_val: string
+  description: string
+}
+
+export interface CheckSet {
+  id: number
+  name: string
+  rules: RuleBuilderState[]
+  result: { violation_count: number; flagged_rows: Record<string, unknown>[] } | null
+  isRunning: boolean
+}
+
+export interface SlTabState {
+  baseVar: string[]
+  qCols: string[]
+  threshold: number
+  minQ: number
+  result: QCResults | null
+}
+
+export interface ItvTabState {
+  intCol: string
+  redThr: number
+  amberThr: number
+  flagThr: number
+  rows: Record<string, unknown>[]
+  intColName: string
+  selectedInt: string
+}
+
 interface AppState {
   // file
   fileId: string | null
@@ -44,6 +89,14 @@ interface AppState {
   // saved profiles
   savedProfiles: SavedProfile[]
 
+  // tab state — persists across tab switches
+  logicCheckSets: CheckSet[]
+  slTabState: SlTabState
+  itvTabState: ItvTabState
+
+  // supplemental results from tab runs — shown in QC Report tab
+  supplementalChecks: import('../types').CheckResult[]
+
   // actions
   setFile: (data: UploadResponse) => void
   setPreview: (rows: Record<string, unknown>[], dtypes: Record<string, string>) => void
@@ -63,6 +116,10 @@ interface AppState {
   setAccent: (a: 'emerald' | 'blue' | 'purple' | 'orange' | 'pink') => void
   saveProfile: (name: string) => void
   deleteProfile: (name: string) => void
+  setLogicCheckSets: (sets: CheckSet[]) => void
+  setSlTabState: (patch: Partial<SlTabState>) => void
+  setItvTabState: (patch: Partial<ItvTabState>) => void
+  addSupplementalCheck: (check: import('../types').CheckResult) => void
   clearFile: () => void
   reset: () => void
 }
@@ -84,6 +141,11 @@ export const useAppStore = create<AppState>((set) => ({
   results: null,
   config: structuredClone(DEFAULT_CONFIG),
   savedProfiles: loadProfiles(),
+
+  logicCheckSets: [{ id: 1, name: 'Check Set 1', rules: [{ id: 1, if_conditions: [{ id: 1, col: '', op: '==', val: '', connector: 'AND' as const }], then_cols: [], then_op: 'is_null', then_val: '', description: '' }], result: null, isRunning: false }],
+  slTabState: { baseVar: [], qCols: [], threshold: 0.9, minQ: 3, result: null },
+  itvTabState: { intCol: '', redThr: 60, amberThr: 30, flagThr: 10, rows: [], intColName: '', selectedInt: '' },
+  supplementalChecks: [],
   groqApiKey: localStorage.getItem('ds_groq_api_key') ?? '',
   activeTab: 'QC Report',
   demosOpen: false,
@@ -139,6 +201,13 @@ export const useAppStore = create<AppState>((set) => ({
       return { savedProfiles: updated }
     }),
 
+  setLogicCheckSets: (sets) => set({ logicCheckSets: sets }),
+  setSlTabState: (patch) => set((s) => ({ slTabState: { ...s.slTabState, ...patch } })),
+  setItvTabState: (patch) => set((s) => ({ itvTabState: { ...s.itvTabState, ...patch } })),
+  addSupplementalCheck: (check) => set((s) => ({
+    supplementalChecks: [...s.supplementalChecks.filter((c) => c.check_name !== check.check_name), check],
+  })),
+
   setGroqApiKey: (key) => {
     localStorage.setItem('ds_groq_api_key', key)
     set({ groqApiKey: key })
@@ -165,7 +234,7 @@ export const useAppStore = create<AppState>((set) => ({
       fileId: null, filename: null, rowCount: null, columnCount: null,
       columnNames: [], dtypes: {}, previewRows: [],
       jobId: null, jobStatus: 'idle', jobProgress: 0, jobError: null,
-      results: null, activeTab: 'QC Report',
+      results: null, supplementalChecks: [], activeTab: 'QC Report',
     }),
 
   reset: () =>

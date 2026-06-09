@@ -36,11 +36,39 @@ def _evaluate_condition(series: pd.Series, operator: str, value=None) -> pd.Seri
             lambda x: isinstance(x, str) and not str(x).replace(".", "").lstrip("-").isdigit()
         )
     if op == "in_list":
-        items = [str(v).strip() for v in (value if isinstance(value, list) else [value])]
-        return series.astype(str).isin(items)
+        if isinstance(value, list):
+            items = [str(v).strip() for v in value]
+        elif isinstance(value, str) and "," in value:
+            items = [v.strip() for v in value.split(",")]
+        else:
+            items = [str(value).strip()] if value is not None else []
+        num_items = set()
+        for item in items:
+            try:
+                num_items.add(float(item))
+            except (ValueError, TypeError):
+                pass
+        num_series = pd.to_numeric(series, errors="coerce")
+        str_match = series.astype(str).isin(items)
+        num_match = num_series.isin(num_items) if num_items else pd.Series(False, index=series.index)
+        return str_match | num_match
     if op == "not_in_list":
-        items = [str(v).strip() for v in (value if isinstance(value, list) else [value])]
-        return ~series.astype(str).isin(items)
+        if isinstance(value, list):
+            items = [str(v).strip() for v in value]
+        elif isinstance(value, str) and "," in value:
+            items = [v.strip() for v in value.split(",")]
+        else:
+            items = [str(value).strip()] if value is not None else []
+        num_items = set()
+        for item in items:
+            try:
+                num_items.add(float(item))
+            except (ValueError, TypeError):
+                pass
+        num_series = pd.to_numeric(series, errors="coerce")
+        str_match = series.astype(str).isin(items)
+        num_match = num_series.isin(num_items) if num_items else pd.Series(False, index=series.index)
+        return ~(str_match | num_match)
 
     # Numeric comparisons
     num = pd.to_numeric(series, errors="coerce")
@@ -69,17 +97,31 @@ def _evaluate_condition(series: pd.Series, operator: str, value=None) -> pd.Seri
 
 
 def _build_mask(df: pd.DataFrame, conditions: list) -> pd.Series:
-    """AND together multiple conditions."""
-    mask = pd.Series(True, index=df.index)
+    """Combine conditions with per-condition AND/OR connectors (connector applies to previous result)."""
+    if not conditions:
+        return pd.Series(True, index=df.index)
+
+    mask = None
     for cond in conditions:
         col = cond.get("column")
         op  = cond.get("operator", "not_null")
         val = cond.get("value")
+        connector = str(cond.get("connector", "AND")).upper()
+
         if col not in df.columns:
             logger.warning(f"Column '{col}' not found — skipping condition.")
             continue
-        mask = mask & _evaluate_condition(df[col], op, val)
-    return mask
+
+        cond_mask = _evaluate_condition(df[col], op, val)
+
+        if mask is None:
+            mask = cond_mask
+        elif connector == "OR":
+            mask = mask | cond_mask
+        else:
+            mask = mask & cond_mask
+
+    return mask if mask is not None else pd.Series(True, index=df.index)
 
 
 # ── Enhanced LogicCheck ───────────────────────────────────────────────────────

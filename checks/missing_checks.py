@@ -17,17 +17,22 @@ class MissingValueCheck(BaseCheck):
     issue_type = "missing_data"
     severity = "warning"
 
-    def __init__(self, columns: list = None, threshold: float = None):
+    def __init__(self, columns: list = None, threshold: float = None,
+                 exclude_columns: list = None):
         """
-        columns: specific columns to check (None = all columns)
+        columns: specific columns to check — if set, only these are checked
         threshold: flag column if missing % exceeds this (0.0–1.0)
+        exclude_columns: columns to skip (ignored when columns is set)
         """
         self.columns = columns
         self.threshold = threshold
+        self.exclude_columns = exclude_columns or []
 
     def run(self, df: pd.DataFrame) -> CheckResult:
-        cols = self.columns or df.columns.tolist()
-        cols = [c for c in cols if c in df.columns]
+        if self.columns:
+            cols = [c for c in self.columns if c in df.columns]
+        else:
+            cols = [c for c in df.columns.tolist() if c not in self.exclude_columns]
 
         if self.threshold is not None:
             # Flag columns that exceed the missing threshold
@@ -60,11 +65,18 @@ class HighMissingColumnCheck(BaseCheck):
     issue_type = "column_missing_rate"
     severity = "info"
 
-    def __init__(self, threshold: float = 0.2):
+    def __init__(self, threshold: float = 0.2, columns: list = None,
+                 exclude_columns: list = None):
         self.threshold = threshold
+        self.columns = columns
+        self.exclude_columns = exclude_columns or []
 
     def run(self, df: pd.DataFrame) -> CheckResult:
-        missing_rates = df.isnull().mean()
+        if self.columns:
+            check_df = df[[c for c in self.columns if c in df.columns]]
+        else:
+            check_df = df[[c for c in df.columns if c not in self.exclude_columns]]
+        missing_rates = check_df.isnull().mean()
         bad_cols = missing_rates[missing_rates > self.threshold]
 
         # Return a 1-row-per-column summary DataFrame

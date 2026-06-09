@@ -3,10 +3,11 @@ import { useMutation } from '@tanstack/react-query'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell,
 } from 'recharts'
-import { Users, AlertTriangle, Download, Sparkles, ChevronDown, ChevronUp } from 'lucide-react'
+import { Users, AlertTriangle, Download, Sparkles, ChevronDown, ChevronUp, CheckCircle2 } from 'lucide-react'
 import { useAppStore } from '../../store/appStore'
 import { computeRisk, type RiskRow } from '../../api/interviewers'
 import { generateFeedbackLetter } from '../../api/ai'
+import { addSupplemental } from '../../api/qc'
 
 const TOOLTIP_STYLE = {
   contentStyle: { background: '#111318', border: '1px solid #1f2330', borderRadius: 6 },
@@ -36,38 +37,51 @@ function MetricCard({ label, value, color }: { label: string; value: number | st
 }
 
 export function Interviewers() {
-  const { fileId, jobId, jobStatus, config, groqApiKey } = useAppStore()
+  const { fileId, jobId, jobStatus, config, groqApiKey, itvTabState, setItvTabState } = useAppStore()
+  const { intCol, redThr, amberThr, flagThr, rows, intColName, selectedInt } = itvTabState
 
-  // Derive default interviewer column from config
+  // Derive default interviewer column from config on first mount if intCol is empty
   const defaultIntCol =
     config.interviewer_duration_check.interviewer_column ||
     config.interviewer_productivity_check.interviewer_column ||
     config.fabrication_check.interviewer_column || ''
 
-  const [intCol, setIntCol] = useState(defaultIntCol)
-  const [redThr, setRedThr] = useState(60)
-  const [amberThr, setAmberThr] = useState(30)
-  const [flagThr, setFlagThr] = useState(10)
-  const [rows, setRows] = useState<RiskRow[]>([])
-  const [intColName, setIntColName] = useState('')
+  React.useEffect(() => {
+    if (!intCol && defaultIntCol) setItvTabState({ intCol: defaultIntCol })
+  }, [defaultIntCol]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Feedback letter state
-  const [selectedInt, setSelectedInt] = useState('')
+  // Feedback letter state — local only (ephemeral, no need to persist)
   const [letter, setLetter] = useState('')
   const [showMethods, setShowMethods] = useState(false)
+  const [reportPushed, setReportPushed] = useState(false)
 
   const riskMutation = useMutation({
     mutationFn: () => computeRisk(fileId!, jobId!, intCol, redThr, amberThr),
     onSuccess: (data) => {
-      setRows(data.rows)
-      setIntColName(data.interviewer_column)
-      if (data.rows.length > 0) setSelectedInt(String(data.rows[0][data.interviewer_column] ?? ''))
+      setItvTabState({
+        rows: data.rows as unknown as Record<string, unknown>[],
+        intColName: data.interviewer_column,
+        selectedInt: data.rows.length > 0 ? String(data.rows[0][data.interviewer_column] ?? '') : '',
+      })
+      setReportPushed(false)
+      // Push risk summary to report
+      if (jobId && data.rows.length > 0) {
+        addSupplemental(jobId, {
+          check_name: 'interviewer_risk_scores',
+          issue_type: 'Interviewer Risk',
+          severity: 'warning',
+          flag_count: data.rows.filter((r: RiskRow) => r.risk_level === 'HIGH').length,
+          flagged_rows: data.rows.filter((r: RiskRow) => r.risk_level !== 'LOW') as unknown as Record<string, unknown>[],
+        }).then(() => setReportPushed(true)).catch(() => { /* non-blocking */ })
+      }
     },
   })
 
+  const typedRows = rows as unknown as RiskRow[]
+
   const letterMutation = useMutation({
     mutationFn: () => {
-      const row = rows.find((r) => String(r[intColName]) === selectedInt)
+      const row = typedRows.find((r) => String(r[intColName]) === selectedInt)
       if (!row) throw new Error('Interviewer not found')
       return generateFeedbackLetter(selectedInt, row as Record<string, unknown>, groqApiKey)
     },
@@ -76,15 +90,15 @@ export function Interviewers() {
 
   const canRun = !!fileId && !!jobId && jobStatus === 'complete' && !!intCol
 
-  const high   = rows.filter((r) => r.risk_score >= redThr).length
-  const medium = rows.filter((r) => r.risk_score >= amberThr && r.risk_score < redThr).length
-  const low    = rows.filter((r) => r.risk_score < amberThr).length
-  const aboveFlagThr = rows.filter((r) => r.flag_rate_pct > flagThr).length
-  const top20 = rows.slice(0, 20)
+  const high   = typedRows.filter((r) => r.risk_score >= redThr).length
+  const medium = typedRows.filter((r) => r.risk_score >= amberThr && r.risk_score < redThr).length
+  const low    = typedRows.filter((r) => r.risk_score < amberThr).length
+  const aboveFlagThr = typedRows.filter((r) => r.flag_rate_pct > flagThr).length
+  const top20 = typedRows.slice(0, 20)
 
   const downloadCSV = () => {
-    const cols = Object.keys(rows[0] ?? {})
-    const csv = [cols.join(','), ...rows.map((r) => cols.map((c) => JSON.stringify(r[c] ?? '')).join(','))].join('\n')
+    const cols = Object.keys(typedRows[0] ?? {})
+    const csv = [cols.join(','), ...typedRows.map((r) => cols.map((c) => JSON.stringify(r[c as keyof RiskRow] ?? '')).join(','))].join('\n')
     const a = document.createElement('a')
     a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }))
     a.download = 'interviewer_risk_scores.csv'
@@ -123,45 +137,52 @@ export function Interviewers() {
           <p className="text-xs text-muted">Interviewer column</p>
           <input
             type="text" className="w-full" value={intCol}
-            onChange={(e) => setIntCol(e.target.value)}
+            onChange={(e) => setItvTabState({ intCol: e.target.value })}
             placeholder="interviewer_id"
           />
         </div>
         <div className="space-y-1">
           <p className="text-xs text-muted">Flag % alert threshold</p>
           <input type="number" className="w-full" min={1} max={100}
-            value={flagThr} onChange={(e) => setFlagThr(+e.target.value)} />
+            value={flagThr} onChange={(e) => setItvTabState({ flagThr: +e.target.value })} />
         </div>
         <div className="space-y-1">
           <p className="text-xs text-muted">Red score ≥</p>
           <input type="number" className="w-full" min={2} max={100}
-            value={redThr} onChange={(e) => setRedThr(+e.target.value)} />
+            value={redThr} onChange={(e) => setItvTabState({ redThr: +e.target.value })} />
         </div>
         <div className="space-y-1">
           <p className="text-xs text-muted">Amber score ≥</p>
           <input type="number" className="w-full" min={1} max={99}
-            value={amberThr} onChange={(e) => setAmberThr(+e.target.value)} />
+            value={amberThr} onChange={(e) => setItvTabState({ amberThr: +e.target.value })} />
         </div>
       </div>
 
-      <button
-        onClick={() => riskMutation.mutate()}
-        disabled={!canRun || riskMutation.isPending}
-        className="btn-primary flex items-center gap-2"
-      >
-        <Users size={14} />
-        {riskMutation.isPending ? 'Computing…' : 'Compute Risk Scores'}
-      </button>
+      <div className="flex items-center gap-3">
+        <button
+          onClick={() => riskMutation.mutate()}
+          disabled={!canRun || riskMutation.isPending}
+          className="btn-primary flex items-center gap-2"
+        >
+          <Users size={14} />
+          {riskMutation.isPending ? 'Computing…' : 'Compute Risk Scores'}
+        </button>
+        {reportPushed && !riskMutation.isPending && (
+          <span className="flex items-center gap-1.5 text-xs text-accent">
+            <CheckCircle2 size={13} /> Added to report
+          </span>
+        )}
+      </div>
 
       {riskMutation.isError && (
         <p className="text-xs text-critical">{(riskMutation.error as Error).message}</p>
       )}
 
-      {rows.length > 0 && (
+      {typedRows.length > 0 && (
         <>
           {/* Metrics */}
           <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-            <MetricCard label="Interviewers" value={rows.length} />
+            <MetricCard label="Interviewers" value={typedRows.length} />
             <MetricCard label="High risk" value={high} color="text-critical" />
             <MetricCard label="Medium risk" value={medium} color="text-warning" />
             <MetricCard label="Low risk" value={low} color="text-accent" />
@@ -192,7 +213,7 @@ export function Interviewers() {
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((row, i) => (
+                  {typedRows.map((row, i) => (
                     <tr key={i} className="border-b border-line/50 hover:bg-surface2 transition-colors">
                       <td className="py-2 px-3 text-muted">{i + 1}</td>
                       <td className="py-2 px-3 font-medium">{String(row[intColName] ?? '')}</td>
@@ -255,10 +276,10 @@ export function Interviewers() {
           {/* Flag rate alerts */}
           <div className="space-y-2">
             <h3 className="text-sm font-medium text-tx">Flag Rate Alerts — threshold: {flagThr}%</h3>
-            {rows.filter((r) => r.flag_rate_pct > flagThr).length === 0 ? (
+            {typedRows.filter((r) => r.flag_rate_pct > flagThr).length === 0 ? (
               <p className="text-xs text-accent">No interviewers exceed the {flagThr}% flag rate threshold.</p>
             ) : (
-              rows.filter((r) => r.flag_rate_pct > flagThr).map((row, i) => (
+              typedRows.filter((r) => r.flag_rate_pct > flagThr).map((row, i) => (
                 <div key={i} className="flex items-start gap-2 p-3 rounded-lg bg-warning/5 border border-warning/20 text-xs">
                   <AlertTriangle size={12} className="text-warning shrink-0 mt-0.5" />
                   <span className="text-tx">
@@ -283,8 +304,8 @@ export function Interviewers() {
             <div className="flex gap-2 items-end">
               <div className="flex-1 space-y-1">
                 <p className="text-xs text-muted">Interviewer</p>
-                <select className="w-full" value={selectedInt} onChange={(e) => setSelectedInt(e.target.value)}>
-                  {rows.map((r) => (
+                <select className="w-full" value={selectedInt} onChange={(e) => setItvTabState({ selectedInt: e.target.value })}>
+                  {typedRows.map((r) => (
                     <option key={String(r[intColName])} value={String(r[intColName])}>
                       {String(r[intColName])} · Risk: {r.risk_score} ({r.risk_level})
                     </option>

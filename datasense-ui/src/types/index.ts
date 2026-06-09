@@ -81,6 +81,8 @@ export interface LogicRule {
 
 export interface QCConfig {
   missing_threshold: number;
+  missing_columns: string[];
+  missing_exclude_columns: string[];
   range_rules: RangeRule[];
   logic_rules: LogicRule[];
   pattern_rules: PatternRule[];
@@ -140,6 +142,8 @@ export interface QCConfig {
 
 export const DEFAULT_CONFIG: QCConfig = {
   missing_threshold: 0.1,
+  missing_columns: [],
+  missing_exclude_columns: [],
   range_rules: [],
   logic_rules: [],
   pattern_rules: [],

@@ -71,3 +71,11 @@ class ColumnsResponse(BaseModel):
 class HealthResponse(BaseModel):
     status: str
     version: str
+
+
+class SupplementalRequest(BaseModel):
+    check_name: str
+    issue_type: str = "Custom Check"
+    severity: str = "warning"
+    flag_count: int = 0
+    flagged_rows: List[Dict[str, Any]] = []

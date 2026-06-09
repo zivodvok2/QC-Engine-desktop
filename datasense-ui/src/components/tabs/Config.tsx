@@ -278,6 +278,75 @@ export function Config() {
             placeholder="respondent_id, phone" />
         </div>
       </section>
+
+      {/* Missing value column scope */}
+      <section className="space-y-3">
+        <p className="label">Missing Value Check — Column Scope</p>
+        <p className="text-xs text-muted">
+          By default every column is checked against the missing threshold. Use one option below to narrow the scope.
+          If both are filled, <span className="text-tx font-medium">Check only</span> takes precedence.
+        </p>
+
+        <div className="space-y-3">
+          <div className="space-y-1.5">
+            <p className="text-xs text-muted">Check only these columns</p>
+            <div className="card2 p-2 flex flex-wrap gap-1.5 items-center min-h-9">
+              {config.missing_columns.map((col, i) => (
+                <span key={i} className="inline-flex items-center gap-1 text-xs bg-accent/10 text-accent px-2 py-0.5 rounded-full">
+                  {col}
+                  <button
+                    onClick={() => updateConfig({ missing_columns: config.missing_columns.filter((_, idx) => idx !== i) })}
+                    className="hover:text-critical transition-colors leading-none"
+                  >×</button>
+                </span>
+              ))}
+              <select
+                className="text-xs bg-transparent border-0 flex-1 min-w-28 outline-none text-muted"
+                value=""
+                onChange={(e) => {
+                  const val = e.target.value
+                  if (val && !config.missing_columns.includes(val))
+                    updateConfig({ missing_columns: [...config.missing_columns, val] })
+                }}
+              >
+                <option value="">{columnNames.length ? '+ Add column…' : 'Load a file to pick columns'}</option>
+                {columnNames.filter((c) => !config.missing_columns.includes(c)).map((c) => (
+                  <option key={c}>{c}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <p className="text-xs text-muted">Exclude these columns</p>
+            <div className="card2 p-2 flex flex-wrap gap-1.5 items-center min-h-9">
+              {config.missing_exclude_columns.map((col, i) => (
+                <span key={i} className="inline-flex items-center gap-1 text-xs bg-warning/10 text-warning px-2 py-0.5 rounded-full">
+                  {col}
+                  <button
+                    onClick={() => updateConfig({ missing_exclude_columns: config.missing_exclude_columns.filter((_, idx) => idx !== i) })}
+                    className="hover:text-critical transition-colors leading-none"
+                  >×</button>
+                </span>
+              ))}
+              <select
+                className="text-xs bg-transparent border-0 flex-1 min-w-28 outline-none text-muted"
+                value=""
+                onChange={(e) => {
+                  const val = e.target.value
+                  if (val && !config.missing_exclude_columns.includes(val))
+                    updateConfig({ missing_exclude_columns: [...config.missing_exclude_columns, val] })
+                }}
+              >
+                <option value="">{columnNames.length ? '+ Add column…' : 'Load a file to pick columns'}</option>
+                {columnNames.filter((c) => !config.missing_exclude_columns.includes(c)).map((c) => (
+                  <option key={c}>{c}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+        </div>
+      </section>
     </div>
   )
 }

@@ -18,6 +18,9 @@ class JobState:
     results: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
     report_path: Optional[str] = None
+    supplemental_checks: List[Dict[str, Any]] = field(default_factory=list)
+    config: Dict[str, Any] = field(default_factory=dict)
+    report_stale: bool = False
 
 
 class FileStore:
