@@ -8,8 +8,9 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+import shared_db
 from job_store import REPORTS_DIR, UPLOAD_DIR
-from routers import ai, compare, eda, interviewers, qc
+from routers import ai, auth, compare, dashboard, eda, interviewers, projects, qc
 
 logger = logging.getLogger(__name__)
 
@@ -36,12 +37,13 @@ async def _cleanup_loop() -> None:
 async def lifespan(app: FastAPI):
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    shared_db.init_tables()
     asyncio.create_task(_cleanup_loop())
     yield
 
 
 app = FastAPI(
-    title="Servallab QC API",
+    title="Servalab QC API",
     version="1.0.0",
     lifespan=lifespan,
 )
@@ -54,11 +56,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(auth.router, prefix="/api")
+app.include_router(projects.router, prefix="/api")
 app.include_router(qc.router, prefix="/api")
 app.include_router(eda.router, prefix="/api")
 app.include_router(ai.router, prefix="/api")
 app.include_router(interviewers.router, prefix="/api")
 app.include_router(compare.router, prefix="/api")
+app.include_router(dashboard.router, prefix="/api")
 
 
 @app.get("/health")

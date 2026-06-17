@@ -8,14 +8,14 @@ export interface OnboardingStep {
 export const ONBOARDING_STEPS: OnboardingStep[] = [
   {
     id: 'welcome',
-    title: 'Welcome to Servallab',
-    body: 'Servallab is a precision survey quality control tool. Upload a CSV or Excel file to get started — it will automatically detect issues in your data and give you a structured report.',
+    title: 'Welcome to Servalab',
+    body: 'Servalab is a precision survey quality control tool. Upload a CSV or Excel file to get started — it will automatically detect issues in your data and give you a structured report.',
     icon: '👋',
   },
   {
     id: 'upload',
     title: 'Upload your data',
-    body: 'Use the sidebar to upload a CSV or Excel file. Servallab accepts .csv, .xlsx, and .xls formats. Once uploaded, your columns appear in each tab for configuration.',
+    body: 'Use the sidebar to upload a CSV or Excel file. Servalab accepts .csv, .xlsx, and .xls formats. Once uploaded, your columns appear in each tab for configuration.',
     icon: '📂',
   },
   {

@@ -4,7 +4,8 @@ routers/interviewers.py — Interviewer risk scoring from QC results
 
 import asyncio
 import json
-from typing import Any, Dict, List
+from collections import Counter
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
 from fastapi import APIRouter, HTTPException
@@ -33,6 +34,8 @@ class RiskRequest(BaseModel):
     interviewer_column: str
     red_threshold: int = 60
     amber_threshold: int = 30
+    supervisor_column: Optional[str] = None
+    date_column: Optional[str] = None
 
 
 def _build_risk_table(
@@ -41,6 +44,7 @@ def _build_risk_table(
     interviewer_col: str,
     red_thr: int,
     amber_thr: int,
+    supervisor_col: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     if interviewer_col not in df.columns:
         raise ValueError(f"Column '{interviewer_col}' not found in dataset")
@@ -88,8 +92,33 @@ def _build_risk_table(
         scores["total_flags"] / scores["total_interviews"].clip(lower=1) * 100
     ).round(1)
 
+    # Attach supervisor — most frequent supervisor value for each interviewer
+    if supervisor_col and supervisor_col in df.columns:
+        sup_map = (
+            df.groupby(interviewer_col)[supervisor_col]
+            .agg(lambda x: x.mode().iloc[0] if len(x) > 0 else None)
+        )
+        scores["supervisor"] = scores.index.map(sup_map).astype(str)
+    else:
+        scores["supervisor"] = None
+
     result_df = scores.reset_index().sort_values("risk_score", ascending=False)
     return json.loads(result_df.to_json(orient="records", date_format="iso"))
+
+
+def _compute_date_trends(
+    checks: List[Dict[str, Any]],
+    date_col: str,
+) -> List[Dict[str, Any]]:
+    """Count total flags per date across all checks."""
+    dates: List[str] = []
+    for check in checks:
+        for row in check.get("flagged_rows", []):
+            val = row.get(date_col)
+            if val is not None:
+                dates.append(str(val)[:10])
+    counts = Counter(dates)
+    return [{"date": d, "flag_count": c} for d, c in sorted(counts.items())]
 
 
 @router.post("/interviewers/risk")
@@ -109,21 +138,26 @@ async def interviewer_risk(req: RiskRequest):
 
     checks = (job.results or {}).get("checks", [])
 
-    def _compute(path, checks, int_col, red_thr, amber_thr):
+    def _compute(path, checks, int_col, red_thr, amber_thr, sup_col):
         loader = DataLoader()
         cleaner = DataCleaner()
         df = cleaner.clean(loader.load(str(path)))
-        return _build_risk_table(df, checks, int_col, red_thr, amber_thr)
+        return _build_risk_table(df, checks, int_col, red_thr, amber_thr, sup_col)
 
     try:
         loop = asyncio.get_running_loop()
         rows = await loop.run_in_executor(
             None, _compute, file_path, checks, req.interviewer_column,
-            req.red_threshold, req.amber_threshold,
+            req.red_threshold, req.amber_threshold, req.supervisor_column,
         )
+        trends = _compute_date_trends(checks, req.date_column) if req.date_column else []
     except ValueError as exc:
         raise HTTPException(status_code=422, detail={"error": str(exc)})
     except Exception as exc:
         raise HTTPException(status_code=500, detail={"error": str(exc)})
 
-    return {"rows": rows, "interviewer_column": req.interviewer_column}
+    return {
+        "rows": rows,
+        "interviewer_column": req.interviewer_column,
+        "date_trends": trends,
+    }

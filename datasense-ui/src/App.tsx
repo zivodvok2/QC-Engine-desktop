@@ -20,6 +20,8 @@ import { Quotas } from './components/tabs/Quotas'
 import { Demos } from './components/tabs/Demos'
 import { OnboardingTooltip } from './components/onboarding/OnboardingTooltip'
 import { SettingsPanel } from './components/settings/SettingsPanel'
+import { LoginModal } from './components/auth/LoginModal'
+import { Dashboard } from './components/dashboard/Dashboard'
 import { useAppStore } from './store/appStore'
 
 const qc = new QueryClient({
@@ -101,7 +103,7 @@ function LandingPage() {
           <div className="w-9 h-9 bg-accent rounded-lg flex items-center justify-center">
             <span className="font-display font-extrabold text-bg text-sm">SL</span>
           </div>
-          <h1 className="font-display font-extrabold text-4xl text-tx tracking-tight">Servallab</h1>
+          <h1 className="font-display font-extrabold text-4xl text-tx tracking-tight">Servalab</h1>
         </div>
         <p className="text-muted text-lg">Survey Quality Control Engine</p>
       </div>
@@ -160,23 +162,36 @@ function TabContent() {
 }
 
 function AppShell() {
-  const { fileId, activeTab, demosOpen, settingsOpen, openSettings, closeSettings } = useAppStore()
+  const { fileId, activeTab, demosOpen, settingsOpen, loginOpen, openSettings, closeSettings, dashboardMode } = useAppStore()
 
   return (
     <div className="flex h-full">
-      <Sidebar />
-      <div className="flex-1 flex flex-col overflow-hidden">
-        <Header onSettings={openSettings} />
-        {fileId || activeTab === 'Config' ? (
-          <TabContent />
-        ) : (
-          <main className="flex-1 overflow-auto">
-            <LandingPage />
-          </main>
-        )}
-      </div>
-      {settingsOpen && <SettingsPanel onClose={closeSettings} />}
-      {demosOpen && !fileId && <DemosModal />}
+      {dashboardMode ? (
+        <>
+          <div className="flex-1 flex flex-col overflow-hidden">
+            <Header onSettings={openSettings} />
+            <Dashboard />
+          </div>
+          {loginOpen && <LoginModal />}
+        </>
+      ) : (
+        <>
+          <Sidebar />
+          <div className="flex-1 flex flex-col overflow-hidden">
+            <Header onSettings={openSettings} />
+            {fileId || activeTab === 'Config' ? (
+              <TabContent />
+            ) : (
+              <main className="flex-1 overflow-auto">
+                <LandingPage />
+              </main>
+            )}
+          </div>
+          {settingsOpen && <SettingsPanel onClose={closeSettings} />}
+          {demosOpen && !fileId && <DemosModal />}
+          {loginOpen && <LoginModal />}
+        </>
+      )}
     </div>
   )
 }

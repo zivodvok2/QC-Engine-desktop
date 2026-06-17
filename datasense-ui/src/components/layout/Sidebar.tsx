@@ -76,7 +76,7 @@ export function Sidebar() {
           <span className="font-display font-extrabold text-bg text-xs">SL</span>
         </div>
         <div className="flex-1">
-          <div className="font-display font-extrabold text-sm text-tx leading-none">Servallab</div>
+          <div className="font-display font-extrabold text-sm text-tx leading-none">Servalab</div>
           <div className="text-[10px] text-muted leading-none mt-0.5">QC Engine</div>
         </div>
         {/* Backend health */}
@@ -368,7 +368,7 @@ export function Sidebar() {
           </button>
           {aboutOpen && (
             <p className="text-xs text-muted leading-relaxed pt-1">
-              Servallab is a survey QC engine for CATI research teams — detecting missing values,
+              Servalab is a survey QC engine for CATI research teams — detecting missing values,
               straightlining, interviewer fraud, logic violations, and more before sign-off.
             </p>
           )}
@@ -385,7 +385,7 @@ export function Sidebar() {
             Contact developer
           </a>
           <a
-            href="mailto:zivoo.ouma@outlook.com?subject=Servallab Feedback"
+            href="mailto:zivoo.ouma@outlook.com?subject=Servalab Feedback"
             className="flex items-center gap-2 text-xs text-muted hover:text-tx transition-colors"
           >
             <Mail size={11} className="text-accent shrink-0" />

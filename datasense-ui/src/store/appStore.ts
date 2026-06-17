@@ -6,6 +6,7 @@ import {
   loadProfiles,
   persistProfiles,
 } from '../utils/configProfiles'
+import type { AuthUser } from '../api/auth'
 
 type JobStatus = 'idle' | 'queued' | 'running' | 'complete' | 'failed'
 
@@ -52,6 +53,9 @@ export interface ItvTabState {
   rows: Record<string, unknown>[]
   intColName: string
   selectedInt: string
+  supervisorCol: string
+  dateCol: string
+  dateTrends: { date: string; flag_count: number }[]
 }
 
 interface AppState {
@@ -122,6 +126,23 @@ interface AppState {
   addSupplementalCheck: (check: import('../types').CheckResult) => void
   clearFile: () => void
   reset: () => void
+
+  // auth
+  authUser: AuthUser | null
+  authToken: string | null
+  loginOpen: boolean
+  loginUser: (user: AuthUser, token: string) => void
+  logoutUser: () => void
+  openLogin: () => void
+  closeLogin: () => void
+
+  // dashboard mode
+  dashboardMode: boolean
+  dashboardProjectId: number | null
+  dashboardView: 'overview' | 'project' | 'interviewers'
+  setDashboardMode: (on: boolean) => void
+  setDashboardProject: (id: number | null) => void
+  setDashboardView: (view: 'overview' | 'project' | 'interviewers') => void
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -144,10 +165,18 @@ export const useAppStore = create<AppState>((set) => ({
 
   logicCheckSets: [{ id: 1, name: 'Check Set 1', rules: [{ id: 1, if_conditions: [{ id: 1, col: '', op: '==', val: '', connector: 'AND' as const }], then_cols: [], then_op: 'is_null', then_val: '', description: '' }], result: null, isRunning: false }],
   slTabState: { baseVar: [], qCols: [], threshold: 0.9, minQ: 3, result: null },
-  itvTabState: { intCol: '', redThr: 60, amberThr: 30, flagThr: 10, rows: [], intColName: '', selectedInt: '' },
+  itvTabState: { intCol: '', redThr: 60, amberThr: 30, flagThr: 10, rows: [], intColName: '', selectedInt: '', supervisorCol: '', dateCol: '', dateTrends: [] },
   supplementalChecks: [],
   groqApiKey: localStorage.getItem('ds_groq_api_key') ?? '',
+  authUser: (() => {
+    try { return JSON.parse(localStorage.getItem('ds_auth_user') ?? 'null') } catch { return null }
+  })(),
+  authToken: localStorage.getItem('ds_auth_token') ?? null,
+  loginOpen: false,
   activeTab: 'QC Report',
+  dashboardMode: false,
+  dashboardProjectId: null,
+  dashboardView: 'overview' as const,
   demosOpen: false,
   settingsOpen: false,
   theme: (localStorage.getItem('ds_theme') as 'dark' | 'light' | 'midnight') ?? 'dark',
@@ -214,6 +243,26 @@ export const useAppStore = create<AppState>((set) => ({
   },
 
   setActiveTab: (tab) => set({ activeTab: tab }),
+
+  loginUser: (user, token) => {
+    localStorage.setItem('ds_auth_user', JSON.stringify(user))
+    localStorage.setItem('ds_auth_token', token)
+    set({ authUser: user, authToken: token, loginOpen: false })
+  },
+  logoutUser: () => {
+    localStorage.removeItem('ds_auth_user')
+    localStorage.removeItem('ds_auth_token')
+    set({ authUser: null, authToken: null })
+  },
+  openLogin: () => set({ loginOpen: true }),
+  closeLogin: () => set({ loginOpen: false }),
+
+  setDashboardMode: (on) => set({ dashboardMode: on }),
+  setDashboardProject: (id) => set({ dashboardProjectId: id, dashboardView: id !== null ? 'project' : 'overview' }),
+  setDashboardView: (view) => set((s) => ({
+    dashboardView: view,
+    dashboardProjectId: view !== 'project' ? null : s.dashboardProjectId,
+  })),
 
   openDemos: () => set({ demosOpen: true }),
   closeDemos: () => set({ demosOpen: false }),

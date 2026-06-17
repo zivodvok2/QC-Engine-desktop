@@ -12,11 +12,18 @@ export interface RiskRow {
   straightlining_flags: number
   productivity_flags: number
   verbatim_flags: number
+  supervisor?: string
+}
+
+export interface DateTrend {
+  date: string
+  flag_count: number
 }
 
 export interface RiskResponse {
   rows: RiskRow[]
   interviewer_column: string
+  date_trends: DateTrend[]
 }
 
 export async function computeRisk(
@@ -25,6 +32,8 @@ export async function computeRisk(
   interviewerColumn: string,
   redThreshold = 60,
   amberThreshold = 30,
+  supervisorColumn?: string,
+  dateColumn?: string,
 ): Promise<RiskResponse> {
   const { data } = await client.post<RiskResponse>('/api/interviewers/risk', {
     file_id: fileId,
@@ -32,6 +41,8 @@ export async function computeRisk(
     interviewer_column: interviewerColumn,
     red_threshold: redThreshold,
     amber_threshold: amberThreshold,
+    supervisor_column: supervisorColumn || undefined,
+    date_column: dateColumn || undefined,
   })
   return data
 }

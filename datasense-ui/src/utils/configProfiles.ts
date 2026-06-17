@@ -74,7 +74,7 @@ export function persistProfiles(profiles: SavedProfile[]) {
 // ── Template ──────────────────────────────────────────────────────────────────
 // _info fields are stripped on import — they exist purely as in-file documentation
 export const BLANK_TEMPLATE = {
-  _info: "Servallab QC Config — set enabled: true for each check you want, fill in your column names. _info fields are ignored on import.",
+  _info: "Servalab QC Config — set enabled: true for each check you want, fill in your column names. _info fields are ignored on import.",
 
   missing_threshold: 0.1,
 

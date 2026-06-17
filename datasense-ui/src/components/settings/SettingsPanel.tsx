@@ -167,12 +167,12 @@ export function SettingsPanel({ onClose }: Props) {
               <span className="font-display font-extrabold text-bg text-xs">SL</span>
             </div>
             <div>
-              <p className="text-sm font-display font-bold text-tx">Servallab</p>
+              <p className="text-sm font-display font-bold text-tx">Servalab</p>
               <p className="text-[10px] text-muted">v{APP_VERSION}</p>
             </div>
           </div>
           <p className="text-xs text-muted leading-relaxed">
-            Servallab is a survey quality control engine built for CATI research teams.
+            Servalab is a survey quality control engine built for CATI research teams.
             It helps field managers detect data quality issues — including missing values,
             straightlining, interviewer fraud, logic violations, and more — before data
             is signed off for analysis.
@@ -194,7 +194,7 @@ export function SettingsPanel({ onClose }: Props) {
             Send a message
           </a>
           <a
-            href="mailto:zivoo.ouma@outlook.com?subject=Servallab Feedback"
+            href="mailto:zivoo.ouma@outlook.com?subject=Servalab Feedback"
             className="w-full flex items-center gap-2 btn-ghost text-sm justify-center"
           >
             <MessageSquare size={14} />

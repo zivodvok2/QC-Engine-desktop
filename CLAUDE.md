@@ -7,12 +7,15 @@ This file provides guidance to Claude Code when working with this repository.
 **Servallab** — CATI survey data Quality Control engine.  
 GitHub: `https://github.com/zivodvok2/QC-Engine-desktop`
 
-The project has **two stacks**:
+The project has **three stacks**:
 
-| Stack | Purpose | Status |
-|---|---|---|
-| React + FastAPI | Primary production UI + API | Active — deployed site |
-| Streamlit (`app.py`) | Legacy local-only UI | Secondary — not deployed |
+| Stack | Purpose | Status | URL |
+|---|---|---|---|
+| React + FastAPI | Primary QC analysis UI + API | Active — deployed | `servallab.com` |
+| Streamlit (`dashboard/`) | Manager/QC Officer tracking dashboard | Active — subdomain | `dashboard.servallab.com` |
+| Streamlit (`app.py`) | Legacy local-only UI | Secondary — not deployed | local only |
+
+**Key distinction:** `dashboard/` is for managers and QC officers to track project health across all active surveys. It is **not** connected to the Interviewers tab in the main React UI — it is a fully separate app deployed under its own subdomain.
 
 ---
 
@@ -34,6 +37,19 @@ npm run dev
 
 Frontend proxies `/api` → `http://localhost:8000` in dev (configured in `vite.config.ts`).  
 In production set `VITE_API_URL` env var to the deployed backend URL.
+
+### Manager/QC Dashboard (subdomain app)
+
+```bash
+# From dashboard/ directory
+cd dashboard
+pip install -r requirements.txt   # first time only
+streamlit run app.py --server.port 8502
+# → http://localhost:8502
+```
+
+Default admin credentials (first run): `admin@servallab.com` / `admin1234`  
+In production: deployed to `dashboard.servallab.com` via `dashboard/fly.toml`
 
 ### Legacy Streamlit UI
 

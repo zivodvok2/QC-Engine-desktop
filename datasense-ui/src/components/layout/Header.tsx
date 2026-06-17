@@ -2,6 +2,7 @@ import React from 'react'
 import {
   Settings, ShieldCheck, Braces, TrendingDown, Users,
   Target, GitCompare, LineChart, Table2, SlidersHorizontal, Clapperboard,
+  LogIn, LogOut, LayoutDashboard,
 } from 'lucide-react'
 import { useAppStore } from '../../store/appStore'
 
@@ -23,7 +24,7 @@ interface Props { onSettings: () => void }
 const PRE_FILE_TABS = new Set(['Config', 'Demos'])
 
 export function Header({ onSettings }: Props) {
-  const { activeTab, setActiveTab, jobStatus, jobProgress, fileId } = useAppStore()
+  const { activeTab, setActiveTab, jobStatus, jobProgress, fileId, authUser, openLogin, logoutUser, dashboardMode, setDashboardMode, setDashboardProject } = useAppStore()
   const visibleTabs = fileId ? TABS : TABS.filter(t => PRE_FILE_TABS.has(t.label))
 
   return (
@@ -67,6 +68,52 @@ export function Header({ onSettings }: Props) {
           {jobStatus === 'failed' && (
             <span className="text-xs text-critical">✗ Run failed</span>
           )}
+
+          {/* Dashboard button — only when signed in */}
+          {authUser && (
+            <button
+              onClick={() => { setDashboardMode(true); setDashboardProject(null) }}
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs transition-colors ${
+                dashboardMode
+                  ? 'bg-accent/20 text-accent border border-accent/40'
+                  : 'text-muted hover:text-tx hover:bg-surface2'
+              }`}
+              title="Open QC Dashboard"
+            >
+              <LayoutDashboard size={13} />
+              <span className="hidden sm:inline">Dashboard</span>
+            </button>
+          )}
+
+          {/* Auth */}
+          {authUser ? (
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs text-muted hidden sm:inline">{authUser.name}</span>
+              <div
+                title={`${authUser.name} (${authUser.role})`}
+                className="w-6 h-6 rounded-full bg-accent/20 text-accent text-[10px] font-bold flex items-center justify-center uppercase"
+              >
+                {authUser.name.slice(0, 1)}
+              </div>
+              <button
+                onClick={logoutUser}
+                className="p-1.5 text-muted hover:text-tx transition-colors"
+                title="Sign out"
+              >
+                <LogOut size={14} />
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={openLogin}
+              className="flex items-center gap-1 text-xs text-muted hover:text-tx transition-colors px-2 py-1 rounded hover:bg-surface2"
+              title="Sign in"
+            >
+              <LogIn size={13} />
+              Sign in
+            </button>
+          )}
+
           <button
             onClick={onSettings}
             className="p-1.5 text-muted hover:text-tx transition-colors"

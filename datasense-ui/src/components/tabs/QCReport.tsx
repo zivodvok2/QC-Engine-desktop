@@ -1,10 +1,12 @@
-import React, { useState } from 'react'
-import { useMutation } from '@tanstack/react-query'
-import { Download, ChevronDown, ChevronUp, Info, XCircle, Activity, Sparkles, FileText } from 'lucide-react'
+import React, { useEffect, useState } from 'react'
+import { useMutation, useQuery } from '@tanstack/react-query'
+import { Download, ChevronDown, ChevronUp, Info, XCircle, Activity, Sparkles, FileText, Database, ChevronRight, Check } from 'lucide-react'
 import { useAppStore } from '../../store/appStore'
 import { downloadReport } from '../../api/qc'
 import { explainFlags, generateQCSummary } from '../../api/ai'
+import { getProjects, createProject, saveQCResults } from '../../api/projects'
 import type { CheckResult } from '../../types'
+import type { Project } from '../../api/projects'
 
 const SEV_ORDER: Record<string, number> = { critical: 0, warning: 1, info: 2 }
 
@@ -127,6 +129,156 @@ function CheckAccordion({
 
       {open && check.flag_count === 0 && (
         <p className="border-t border-line px-4 py-3 text-xs text-muted">No rows flagged by this check.</p>
+      )}
+    </div>
+  )
+}
+
+function SaveToProject() {
+  const { authUser, authToken, fileId, filename, openLogin } = useAppStore()
+  const [expanded, setExpanded] = useState(false)
+  const [mode, setMode] = useState<'pick' | 'new'>('pick')
+  const [selectedId, setSelectedId] = useState<number | ''>('')
+  const [newName, setNewName] = useState('')
+  const [waveLabel, setWaveLabel] = useState('')
+  const [saved, setSaved] = useState(false)
+  const [saveError, setSaveError] = useState('')
+
+  const projectsQuery = useQuery<Project[]>({
+    queryKey: ['projects', authToken],
+    queryFn: () => getProjects(authToken!),
+    enabled: !!authToken && expanded,
+  })
+
+  const saveMutation = useMutation({
+    mutationFn: async () => {
+      if (!authToken || !fileId || !filename) throw new Error('Missing auth or file')
+      let projectId: number
+
+      if (mode === 'new') {
+        const name = newName.trim()
+        if (!name) throw new Error('Project name required')
+        const proj = await createProject(name, authToken)
+        projectId = proj.id
+      } else {
+        if (!selectedId) throw new Error('Select a project')
+        projectId = Number(selectedId)
+      }
+
+      return saveQCResults(projectId, fileId, filename, authToken, waveLabel.trim() || undefined)
+    },
+    onSuccess: () => {
+      setSaved(true)
+      setSaveError('')
+    },
+    onError: (err) => {
+      setSaveError((err as Error).message)
+    },
+  })
+
+  if (!authUser) {
+    return (
+      <div className="card p-4 flex items-center justify-between">
+        <div className="flex items-center gap-2 text-sm text-muted">
+          <Database size={14} />
+          Save results to a dashboard project
+        </div>
+        <button onClick={openLogin} className="btn-ghost text-xs flex items-center gap-1">
+          Sign in <ChevronRight size={12} />
+        </button>
+      </div>
+    )
+  }
+
+  if (saved) {
+    return (
+      <div className="card p-4 flex items-center gap-2 text-accent text-sm">
+        <Check size={14} />
+        Results saved to project — visible on the dashboard.
+      </div>
+    )
+  }
+
+  return (
+    <div className="card overflow-hidden">
+      <button
+        onClick={() => setExpanded((x) => !x)}
+        className="w-full flex items-center justify-between px-4 py-3 text-sm text-tx hover:bg-surface2 transition-colors"
+      >
+        <span className="flex items-center gap-2">
+          <Database size={14} className="text-accent" />
+          Save to dashboard project
+        </span>
+        {expanded ? <ChevronDown size={14} className="text-muted" /> : <ChevronRight size={14} className="text-muted" />}
+      </button>
+
+      {expanded && (
+        <div className="border-t border-line px-4 pb-4 pt-3 space-y-4">
+          {/* Project mode toggle */}
+          <div className="flex gap-2">
+            <button
+              onClick={() => setMode('pick')}
+              className={`text-xs px-3 py-1 rounded-md border transition-colors ${mode === 'pick' ? 'border-accent text-accent bg-accent/10' : 'border-line text-muted hover:text-tx'}`}
+            >
+              Existing project
+            </button>
+            <button
+              onClick={() => setMode('new')}
+              className={`text-xs px-3 py-1 rounded-md border transition-colors ${mode === 'new' ? 'border-accent text-accent bg-accent/10' : 'border-line text-muted hover:text-tx'}`}
+            >
+              New project
+            </button>
+          </div>
+
+          {mode === 'pick' && (
+            <div>
+              {projectsQuery.isLoading && <p className="text-xs text-muted">Loading projects…</p>}
+              {projectsQuery.isError && <p className="text-xs text-critical">Could not load projects</p>}
+              {projectsQuery.data && (
+                <select
+                  value={selectedId}
+                  onChange={(e) => setSelectedId(e.target.value ? Number(e.target.value) : '')}
+                  className="w-full bg-surface2 border border-line rounded-lg px-3 py-2 text-sm text-tx focus:outline-none focus:border-accent"
+                >
+                  <option value="">— select a project —</option>
+                  {projectsQuery.data.map((p) => (
+                    <option key={p.id} value={p.id}>{p.name}{p.status === 'closed' ? ' (closed)' : ''}</option>
+                  ))}
+                </select>
+              )}
+            </div>
+          )}
+
+          {mode === 'new' && (
+            <input
+              type="text"
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              placeholder="Project name"
+              className="w-full bg-surface2 border border-line rounded-lg px-3 py-2 text-sm text-tx placeholder:text-muted focus:outline-none focus:border-accent"
+            />
+          )}
+
+          <input
+            type="text"
+            value={waveLabel}
+            onChange={(e) => setWaveLabel(e.target.value)}
+            placeholder="Wave label (optional, e.g. Wave 1)"
+            className="w-full bg-surface2 border border-line rounded-lg px-3 py-2 text-sm text-tx placeholder:text-muted focus:outline-none focus:border-accent"
+          />
+
+          {saveError && (
+            <p className="text-xs text-critical bg-critical/10 border border-critical/30 rounded px-3 py-2">{saveError}</p>
+          )}
+
+          <button
+            onClick={() => saveMutation.mutate()}
+            disabled={saveMutation.isPending}
+            className="btn-primary text-sm"
+          >
+            {saveMutation.isPending ? 'Saving…' : 'Save to project'}
+          </button>
+        </div>
       )}
     </div>
   )
@@ -280,6 +432,9 @@ export function QCReport() {
           ))}
         </div>
       )}
+
+      {/* Save to dashboard project */}
+      <SaveToProject />
     </div>
   )
 }

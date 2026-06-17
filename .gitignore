@@ -27,3 +27,5 @@ data/processed/*
 
 # Outputs
 outputs/
+# Dashboard SQLite DB
+dashboard/qc_dashboard.db
