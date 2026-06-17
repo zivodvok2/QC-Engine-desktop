@@ -13,7 +13,7 @@ import { computeRisk, type RiskRow } from '../../api/interviewers'
 import { generateFeedbackLetter } from '../../api/ai'
 import { addSupplemental } from '../../api/qc'
 import { InterviewerProfile } from './InterviewerProfile'
-import { getInterviewerMetrics, type InterviewerMetrics } from '../../api/dashboard'
+import { getInterviewerMetrics, upsertInterviewer, type InterviewerMetrics } from '../../api/dashboard'
 
 const TOOLTIP_STYLE = {
   contentStyle: { background: '#111318', border: '1px solid #1f2330', borderRadius: 6 },
@@ -248,11 +248,24 @@ export function Interviewers() {
           )
         )
         const metrics: Record<string, InterviewerMetrics> = {}
-        results.forEach(r => {
-          if (r.status === 'fulfilled') { const [c, m] = r.value; metrics[c] = m }
+        const unregistered: string[] = []
+        results.forEach((r, i) => {
+          if (r.status === 'fulfilled') {
+            const [c, m] = r.value
+            metrics[c] = m
+            if (!m.info) unregistered.push(c)  // has activity but not formally registered
+          } else {
+            unregistered.push(codes[i])  // 404 — completely unknown
+          }
         })
         setDbMetrics(metrics)
         setDbLoading(false)
+        // Auto-register new interviewers found in this file (fire-and-forget)
+        if (unregistered.length > 0) {
+          Promise.allSettled(
+            unregistered.map(code => upsertInterviewer({ interviewer_code: code }, authToken))
+          ).catch(() => { /* non-blocking */ })
+        }
       }
     },
   })
