@@ -26,6 +26,7 @@ export interface ProjectSummary {
   flag_critical_pct: number
   end_date: string | null
   start_date: string | null
+  loi_min_minutes: number | null
 }
 
 export interface QualityRecord {
@@ -410,17 +411,125 @@ export async function getInterviewerMetrics(code: string, token: string): Promis
 
 // Templates
 
+export async function uploadPerformance(
+  projectId: number,
+  file: File,
+  token: string,
+  waveLabel?: string,
+): Promise<{ upload_id: string; row_count: number }> {
+  const fd = new FormData()
+  fd.append('file', file)
+  if (waveLabel) fd.append('wave_label', waveLabel)
+  const { data } = await client.post(`/api/dashboard/projects/${projectId}/performance`, fd, {
+    headers: { ...authHeader(token), 'Content-Type': 'multipart/form-data' },
+  })
+  return data
+}
+
+export async function uploadTiming(
+  projectId: number,
+  file: File,
+  token: string,
+  waveLabel?: string,
+): Promise<{ upload_id: string; row_count: number }> {
+  const fd = new FormData()
+  fd.append('file', file)
+  if (waveLabel) fd.append('wave_label', waveLabel)
+  const { data } = await client.post(`/api/dashboard/projects/${projectId}/timing`, fd, {
+    headers: { ...authHeader(token), 'Content-Type': 'multipart/form-data' },
+  })
+  return data
+}
+
+export async function uploadCancelled(
+  projectId: number,
+  file: File,
+  token: string,
+  waveLabel?: string,
+): Promise<{ upload_id: string; row_count: number }> {
+  const fd = new FormData()
+  fd.append('file', file)
+  if (waveLabel) fd.append('wave_label', waveLabel)
+  const { data } = await client.post(`/api/dashboard/projects/${projectId}/cancelled`, fd, {
+    headers: { ...authHeader(token), 'Content-Type': 'multipart/form-data' },
+  })
+  return data
+}
+
+export interface PerformanceRecord {
+  id: number
+  interviewer_id: string | null
+  region: string | null
+  first_interview: string | null
+  last_interview: string | null
+  interview_completes: number
+  accompaniments: number
+  backcheck_completed: number
+  cancelled_interviews: number
+}
+
+export interface TimingRecord {
+  id: number
+  instance_id: string | null
+  interviewer_id: string | null
+  region: string | null
+  interview_date: string | null
+  duration_minutes: number | null
+}
+
+export interface CancelledRecord {
+  id: number
+  instance_id: string | null
+  interviewer_id: string | null
+  region: string | null
+  interview_date: string | null
+  interview_length: number | null
+  active_length: number | null
+  interviewer_performance: string | null
+}
+
+export async function getPerformanceRecords(projectId: number, token: string): Promise<PerformanceRecord[]> {
+  const { data } = await client.get<PerformanceRecord[]>(`/api/dashboard/projects/${projectId}/performance-records`, {
+    headers: authHeader(token),
+  })
+  return data
+}
+
+export async function getTimingRecords(projectId: number, token: string): Promise<TimingRecord[]> {
+  const { data } = await client.get<TimingRecord[]>(`/api/dashboard/projects/${projectId}/timing-records`, {
+    headers: authHeader(token),
+  })
+  return data
+}
+
+export async function getCancelledRecords(projectId: number, token: string): Promise<CancelledRecord[]> {
+  const { data } = await client.get<CancelledRecord[]>(`/api/dashboard/projects/${projectId}/cancelled-records`, {
+    headers: authHeader(token),
+  })
+  return data
+}
+
 export function getTemplateUrl(type: 'backcheck' | 'listen_in' | 'quality_report', token: string): string {
   const base = (client.defaults.baseURL ?? '') + `/api/dashboard/templates/${type}`
   return base
 }
 
-export async function downloadTemplate(type: 'backcheck' | 'listen_in' | 'quality_report', token: string): Promise<void> {
+export async function downloadTemplate(
+  type: 'backcheck' | 'listen_in' | 'quality_report' | 'performance' | 'timing' | 'cancelled',
+  token: string,
+): Promise<void> {
   const { data } = await client.get(`/api/dashboard/templates/${type}`, {
     headers: authHeader(token),
     responseType: 'blob',
   })
-  const names = { backcheck: 'backcheck_template.xlsx', listen_in: 'listen_in_template.xlsx', quality_report: 'quality_report_template.xlsx' }
+  const names = {
+    backcheck: 'backcheck_template.xlsx',
+    listen_in: 'listen_in_template.xlsx',
+    quality_report: 'quality_report_template.xlsx',
+    performance: 'performance_template.xlsx',
+    timing: 'timing_template.xlsx',
+    cancelled: 'cancelled_template.xlsx',
+  }
   const url = URL.createObjectURL(new Blob([data]))
   const a = document.createElement('a')
   a.href = url

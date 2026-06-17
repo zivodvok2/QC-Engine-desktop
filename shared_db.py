@@ -436,6 +436,16 @@ def get_cancelled_records(project_id: int) -> list:
     return [dict(r) for r in rows]
 
 
+def get_interviewer_code_set() -> set:
+    """Return the set of all known interviewer_codes in the registry."""
+    if not db_available():
+        return set()
+    conn = get_conn()
+    rows = conn.execute("SELECT interviewer_code FROM interviewers").fetchall()
+    conn.close()
+    return {r["interviewer_code"] for r in rows}
+
+
 # ── Upload log ─────────────────────────────────────────────────────────────────
 
 def get_upload_log(project_id: Optional[int] = None) -> list:
@@ -576,7 +586,7 @@ def get_dashboard_summary() -> list:
 # ── Activity feed ──────────────────────────────────────────────────────────────
 
 def init_tables():
-    """Create extended tables (supervisors, interviewers) if they don't exist."""
+    """Create extended tables and apply additive migrations."""
     if not db_available():
         return
     conn = get_conn()
@@ -601,8 +611,96 @@ def init_tables():
             created_at TEXT DEFAULT (datetime('now'))
         )
     """)
+    # Additive migrations — safe to run repeatedly
+    try:
+        conn.execute("ALTER TABLE users ADD COLUMN interviewer_code TEXT")
+    except Exception:
+        pass
     conn.commit()
     conn.close()
+
+
+def insert_performance_records(
+    project_id: int,
+    uploaded_by: int,
+    filename: str,
+    records: list,
+    wave_label: Optional[str] = None,
+) -> str:
+    uid = str(uuid.uuid4())
+    cols = [
+        "interviewer_id", "region", "first_interview", "last_interview",
+        "interview_completes", "followup_completes", "ecs_completes",
+        "work_summary", "accompaniments", "cancelled_interviews",
+        "backcheck_telephone_created", "backcheck_f2f_created",
+        "backcheck_f2f_infield", "backcheck_total", "backcheck_completed",
+    ]
+    conn = get_conn()
+    for r in records:
+        conn.execute(
+            f"""INSERT INTO performance_records
+                (project_id, upload_id, uploaded_by, {', '.join(cols)})
+                VALUES (?,?,?,{','.join('?' * len(cols))})""",
+            (project_id, uid, uploaded_by, *[r.get(c) for c in cols]),
+        )
+    _log_upload(conn, uid, project_id, "performance", uploaded_by, filename, len(records), wave_label)
+    conn.commit()
+    conn.close()
+    return uid
+
+
+def insert_timing_records(
+    project_id: int,
+    uploaded_by: int,
+    filename: str,
+    records: list,
+    wave_label: Optional[str] = None,
+) -> str:
+    uid = str(uuid.uuid4())
+    cols = ["instance_id", "interviewer_id", "region", "interview_date", "duration_minutes"]
+    conn = get_conn()
+    for r in records:
+        conn.execute(
+            f"""INSERT INTO timing_records
+                (project_id, upload_id, uploaded_by, {', '.join(cols)})
+                VALUES (?,?,?,{','.join('?' * len(cols))})""",
+            (project_id, uid, uploaded_by, *[r.get(c) for c in cols]),
+        )
+    _log_upload(conn, uid, project_id, "timing", uploaded_by, filename, len(records), wave_label)
+    conn.commit()
+    conn.close()
+    return uid
+
+
+def insert_cancelled_records(
+    project_id: int,
+    uploaded_by: int,
+    filename: str,
+    records: list,
+    wave_label: Optional[str] = None,
+) -> str:
+    uid = str(uuid.uuid4())
+    cols = [
+        "instance_id", "region", "location", "sample_point_id", "interviewer_id",
+        "script_name", "interview_date", "start_time", "end_time",
+        "interview_length", "active_length", "avg_length_sample_point",
+        "avg_length_region", "avg_length_project", "idle_time", "gap_to_last",
+        "same_day_finish", "qf_a", "qf_b", "qf_c", "qf_d", "qf_e", "qf_f",
+        "interviewer_performance", "backcheck_result_telephone",
+        "backcheck_result_f2f", "backcheck_result_independent",
+    ]
+    conn = get_conn()
+    for r in records:
+        conn.execute(
+            f"""INSERT INTO cancelled_interview_records
+                (project_id, upload_id, uploaded_by, {', '.join(cols)})
+                VALUES (?,?,?,{','.join('?' * len(cols))})""",
+            (project_id, uid, uploaded_by, *[r.get(c) for c in cols]),
+        )
+    _log_upload(conn, uid, project_id, "cancelled_interviews", uploaded_by, filename, len(records), wave_label)
+    conn.commit()
+    conn.close()
+    return uid
 
 
 # ── Supervisors ────────────────────────────────────────────────────────────────

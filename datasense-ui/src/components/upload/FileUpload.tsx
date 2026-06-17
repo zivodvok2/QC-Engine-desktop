@@ -1,6 +1,6 @@
 import React, { useCallback } from 'react'
 import { useDropzone } from 'react-dropzone'
-import { Upload, FileText, AlertCircle, X, GitCompare } from 'lucide-react'
+import { Upload, FileText, AlertCircle, X, GitCompare, RotateCcw } from 'lucide-react'
 import { useQCRun } from '../../hooks/useQCRun'
 import { useAppStore } from '../../store/appStore'
 
@@ -12,7 +12,7 @@ interface Props {
 
 export function FileUpload({ compact = false }: Props) {
   const { upload, isUploading, uploadError } = useQCRun()
-  const { filename, rowCount, columnCount, clearFile, setActiveTab } = useAppStore()
+  const { filename, rowCount, columnCount, clearFile, setActiveTab, sessionRestored, sessionRestoredAt, dismissSessionRestore } = useAppStore()
 
   const onDrop = useCallback(
     (files: File[]) => { if (files[0]) upload(files[0]) },
@@ -56,6 +56,15 @@ export function FileUpload({ compact = false }: Props) {
 
   return (
     <div className="space-y-2">
+      {sessionRestored && (
+        <div className="flex items-center gap-2 px-3 py-2 bg-accent/10 border border-accent/30 rounded-lg text-xs text-accent">
+          <RotateCcw size={11} className="shrink-0" />
+          <span className="flex-1">Session restored from {sessionRestoredAt} — upload a new file to replace it.</span>
+          <button onClick={dismissSessionRestore} className="text-accent/60 hover:text-accent">
+            <X size={11} />
+          </button>
+        </div>
+      )}
       <div
         {...getRootProps()}
         className={`

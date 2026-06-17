@@ -31,6 +31,12 @@ class LoginResponse(BaseModel):
     user: UserOut
 
 
+class RegisterRequest(BaseModel):
+    email: str
+    password: str
+    full_name: str
+
+
 router = APIRouter()
 
 
@@ -77,6 +83,26 @@ def login(req: LoginRequest):
     user = shared_db.get_user_by_email(req.email.strip().lower())
     if not user or not _verify_password(req.password, user["password_hash"]):
         raise HTTPException(status_code=401, detail="Invalid email or password")
+    token = _make_token(user["id"])
+    return LoginResponse(
+        token=token,
+        user=UserOut(id=user["id"], email=user["email"], name=user["full_name"], role=user["role"]),
+    )
+
+
+@router.post("/auth/register", response_model=LoginResponse)
+def register(req: RegisterRequest):
+    if not shared_db.db_available():
+        raise HTTPException(status_code=503, detail="Auth database not available")
+    if len(req.password) < 8:
+        raise HTTPException(status_code=422, detail="Password must be at least 8 characters")
+    hashed = bcrypt.hashpw(req.password.encode(), bcrypt.gensalt()).decode()
+    ok, err = shared_db.create_user(
+        req.email.strip().lower(), hashed, req.full_name.strip(), "other"
+    )
+    if not ok:
+        raise HTTPException(status_code=409, detail=err)
+    user = shared_db.get_user_by_email(req.email.strip().lower())
     token = _make_token(user["id"])
     return LoginResponse(
         token=token,

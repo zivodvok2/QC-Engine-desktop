@@ -161,8 +161,17 @@ function TabContent() {
   )
 }
 
+const IS_DASHBOARD_DOMAIN = typeof window !== 'undefined' && (
+  window.location.hostname.includes('dashboard.') ||
+  new URLSearchParams(window.location.search).get('mode') === 'dashboard'
+)
+
 function AppShell() {
-  const { fileId, activeTab, demosOpen, settingsOpen, loginOpen, openSettings, closeSettings, dashboardMode } = useAppStore()
+  const { fileId, activeTab, demosOpen, settingsOpen, loginOpen, openSettings, closeSettings, dashboardMode, setDashboardMode } = useAppStore()
+
+  useEffect(() => {
+    if (IS_DASHBOARD_DOMAIN) setDashboardMode(true)
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="flex h-full">

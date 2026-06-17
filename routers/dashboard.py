@@ -255,6 +255,12 @@ def get_timing_records(project_id: int, user: dict = Depends(get_current_user)):
     return shared_db.get_timing_records(project_id)
 
 
+@router.get("/projects/{project_id}/cancelled-records")
+def get_cancelled_records(project_id: int, user: dict = Depends(get_current_user)):
+    _require_db()
+    return shared_db.get_cancelled_records(project_id)
+
+
 @router.get("/projects/{project_id}/upload-log")
 def get_upload_log(project_id: int, user: dict = Depends(get_current_user)):
     _require_db()
@@ -342,6 +348,115 @@ def add_manual_listen_in(
         action_taken=body.action_taken,
     )
     return {"status": "ok"}
+
+
+@router.post("/projects/{project_id}/performance")
+async def upload_performance(
+    project_id: int,
+    file: UploadFile = File(...),
+    wave_label: Optional[str] = Form(None),
+    user: dict = Depends(get_current_user),
+):
+    _require_db()
+    _require_upload(user)
+    project = shared_db.get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    content = await file.read()
+    try:
+        df = pd.read_excel(io.BytesIO(content), skiprows=2)
+    except Exception:
+        try:
+            df = pd.read_excel(io.BytesIO(content))
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Failed to read Excel file: {e}")
+    from dashboard.config import PERFORMANCE_IFIELD_COL_MAP
+    df = df.rename(columns=PERFORMANCE_IFIELD_COL_MAP)
+    df.columns = [str(c).strip().lower() for c in df.columns]
+    for col in ("first_interview", "last_interview"):
+        if col in df.columns:
+            df[col] = pd.to_datetime(df[col], errors="coerce").dt.strftime("%Y-%m-%d")
+    for col in ["interview_completes", "followup_completes", "ecs_completes", "work_summary",
+                "accompaniments", "cancelled_interviews", "backcheck_telephone_created",
+                "backcheck_f2f_created", "backcheck_f2f_infield", "backcheck_total", "backcheck_completed"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype(int)
+    records = [{c: (None if (v != v) else (v.item() if hasattr(v, "item") else v))
+                for c, v in row.items()} for _, row in df.iterrows()]
+    uid = shared_db.insert_performance_records(
+        project_id, user["id"], file.filename or "upload.xlsx", records, wave_label
+    )
+    return {"status": "ok", "upload_id": uid, "row_count": len(records)}
+
+
+@router.post("/projects/{project_id}/timing")
+async def upload_timing(
+    project_id: int,
+    file: UploadFile = File(...),
+    wave_label: Optional[str] = Form(None),
+    user: dict = Depends(get_current_user),
+):
+    _require_db()
+    _require_upload(user)
+    project = shared_db.get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    content = await file.read()
+    try:
+        df = pd.read_excel(io.BytesIO(content))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to read Excel file: {e}")
+    df.columns = [str(c).strip().lower() for c in df.columns]
+    rename = {
+        "instance id": "instance_id", "interviewer id": "interviewer_id",
+        "interview date": "interview_date", "duration minutes": "duration_minutes",
+        "duration_mins": "duration_minutes", "loi": "duration_minutes",
+    }
+    df = df.rename(columns=rename)
+    if "interview_date" in df.columns:
+        df["interview_date"] = pd.to_datetime(df["interview_date"], errors="coerce").dt.strftime("%Y-%m-%d")
+    if "duration_minutes" in df.columns:
+        df["duration_minutes"] = pd.to_numeric(df["duration_minutes"], errors="coerce")
+    records = [{c: (None if (v != v) else (v.item() if hasattr(v, "item") else v))
+                for c, v in row.items()} for _, row in df.iterrows()]
+    uid = shared_db.insert_timing_records(
+        project_id, user["id"], file.filename or "upload.xlsx", records, wave_label
+    )
+    return {"status": "ok", "upload_id": uid, "row_count": len(records)}
+
+
+@router.post("/projects/{project_id}/cancelled")
+async def upload_cancelled(
+    project_id: int,
+    file: UploadFile = File(...),
+    wave_label: Optional[str] = Form(None),
+    user: dict = Depends(get_current_user),
+):
+    _require_db()
+    _require_upload(user)
+    project = shared_db.get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    content = await file.read()
+    try:
+        df = pd.read_excel(io.BytesIO(content))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to read Excel file: {e}")
+    from dashboard.config import CANCELLED_IFIELD_COL_MAP
+    df = df.rename(columns=CANCELLED_IFIELD_COL_MAP)
+    df.columns = [str(c).strip().lower() for c in df.columns]
+    if "interview_date" in df.columns:
+        df["interview_date"] = pd.to_datetime(df["interview_date"], errors="coerce").dt.strftime("%Y-%m-%d")
+    for col in ["interview_length", "active_length", "avg_length_sample_point",
+                "avg_length_region", "avg_length_project", "idle_time", "gap_to_last"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+    records = [{c: (None if (v != v) else (v.item() if hasattr(v, "item") else v))
+                for c, v in row.items()} for _, row in df.iterrows()]
+    uid = shared_db.insert_cancelled_records(
+        project_id, user["id"], file.filename or "upload.xlsx", records, wave_label
+    )
+    return {"status": "ok", "upload_id": uid, "row_count": len(records)}
 
 
 @router.delete("/projects/{project_id}/listen-in/{record_id}")
@@ -550,6 +665,34 @@ def download_template(
             },
         },
     }
+
+    TEMPLATES.update({
+        "performance": {
+            "filename": "performance_template.xlsx",
+            "columns": ["Login", "Management Region", "Interview completes", "Follow-Ups completes",
+                        "ECS completes", "Work Summary", "Accompaniment", "Cancelled Interviews",
+                        "Back-Checks\ncompleted"],
+            "example": {"Login": "NB0664", "Management Region": "Nairobi",
+                        "Interview completes": 12, "Follow-Ups completes": 0,
+                        "ECS completes": 0, "Work Summary": 12, "Accompaniment": 2,
+                        "Cancelled Interviews": 1, "Back-Checks\ncompleted": 3},
+        },
+        "timing": {
+            "filename": "timing_template.xlsx",
+            "columns": ["INSTANCE_ID", "INTERVIEWER_ID", "REGION", "INTERVIEW_DATE", "DURATION_MINUTES"],
+            "example": {"INSTANCE_ID": "3782413", "INTERVIEWER_ID": "NB0664",
+                        "REGION": "Nairobi", "INTERVIEW_DATE": "2025-04-15", "DURATION_MINUTES": 41.7},
+        },
+        "cancelled": {
+            "filename": "cancelled_template.xlsx",
+            "columns": ["Instance ID ", "Interviewer ID", "Region", "Interview Date",
+                        "Interview Start Time", "Interview End Time", "Interview length"],
+            "example": {"Instance ID ": "3782413", "Interviewer ID": "NB0664",
+                        "Region": "Nairobi", "Interview Date": "2025-04-15",
+                        "Interview Start Time": "14:56:22", "Interview End Time": "15:38:05",
+                        "Interview length": 41.7},
+        },
+    })
 
     if template_type not in TEMPLATES:
         raise HTTPException(status_code=404, detail=f"Unknown template type: {template_type}")

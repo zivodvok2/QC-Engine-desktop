@@ -187,8 +187,13 @@ export function Overview({ onSelectProject }: Props) {
                       {p.client && <p className="text-xs text-muted mt-0.5 pl-4">{p.client}</p>}
                       {p.job_number && <p className="text-xs text-muted pl-4">{p.job_number}</p>}
                     </div>
-                    {isCritical && <span className="badge-critical shrink-0">Critical</span>}
-                    {isWarning && <span className="badge-warning shrink-0">Warning</span>}
+                    <div className="flex flex-col items-end gap-1">
+                      {isCritical && <span className="badge-critical shrink-0">Critical</span>}
+                      {isWarning && <span className="badge-warning shrink-0">Warning</span>}
+                      {!isCritical && !isWarning && p.status === 'active' && p.approved > 0 && (
+                        <span className="text-[10px] font-medium text-accent bg-accent/10 border border-accent/30 rounded px-1.5 py-0.5 shrink-0">On Track</span>
+                      )}
+                    </div>
                   </div>
 
                   {/* Progress bar */}

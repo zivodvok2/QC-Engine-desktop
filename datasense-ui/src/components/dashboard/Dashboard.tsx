@@ -2,6 +2,11 @@ import React from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { ArrowLeft, LayoutDashboard, Loader2, Users } from 'lucide-react'
 import { useAppStore } from '../../store/appStore'
+
+const IS_DASHBOARD_DOMAIN = typeof window !== 'undefined' && (
+  window.location.hostname.includes('dashboard.') ||
+  new URLSearchParams(window.location.search).get('mode') === 'dashboard'
+)
 import { getDashboardSummary, type ProjectSummary } from '../../api/dashboard'
 import { Overview } from './Overview'
 import { ProjectDetail } from './ProjectDetail'
@@ -25,14 +30,16 @@ export function Dashboard() {
     <div className="flex h-full overflow-hidden">
       {/* Left sidebar */}
       <aside className="w-52 shrink-0 bg-surface border-r border-line flex flex-col overflow-hidden">
-        {/* Back button */}
-        <button
-          onClick={() => setDashboardMode(false)}
-          className="flex items-center gap-2 px-4 py-3 text-sm text-muted hover:text-tx hover:bg-surface2 transition-colors border-b border-line"
-        >
-          <ArrowLeft size={13} />
-          QC Engine
-        </button>
+        {/* Back button — hidden on dashboard subdomain */}
+        {!IS_DASHBOARD_DOMAIN && (
+          <button
+            onClick={() => setDashboardMode(false)}
+            className="flex items-center gap-2 px-4 py-3 text-sm text-muted hover:text-tx hover:bg-surface2 transition-colors border-b border-line"
+          >
+            <ArrowLeft size={13} />
+            QC Engine
+          </button>
+        )}
 
         {/* Overview button */}
         <button

@@ -6,6 +6,11 @@ import {
 } from 'lucide-react'
 import { useAppStore } from '../../store/appStore'
 
+const IS_DASHBOARD_DOMAIN = typeof window !== 'undefined' && (
+  window.location.hostname.includes('dashboard.') ||
+  new URLSearchParams(window.location.search).get('mode') === 'dashboard'
+)
+
 const TABS: { label: string; icon: React.ElementType }[] = [
   { label: 'QC Report',      icon: ShieldCheck },
   { label: 'Logic Checks',   icon: Braces },
@@ -69,19 +74,19 @@ export function Header({ onSettings }: Props) {
             <span className="text-xs text-critical">✗ Run failed</span>
           )}
 
-          {/* Dashboard button — only when signed in */}
-          {authUser && (
+          {/* Dashboard button — only when signed in and NOT locked on the dashboard subdomain */}
+          {authUser && !IS_DASHBOARD_DOMAIN && (
             <button
-              onClick={() => { setDashboardMode(true); setDashboardProject(null) }}
+              onClick={() => { setDashboardMode(!dashboardMode); setDashboardProject(null) }}
               className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs transition-colors ${
                 dashboardMode
                   ? 'bg-accent/20 text-accent border border-accent/40'
                   : 'text-muted hover:text-tx hover:bg-surface2'
               }`}
-              title="Open QC Dashboard"
+              title={dashboardMode ? 'Exit Dashboard' : 'Open QC Dashboard'}
             >
               <LayoutDashboard size={13} />
-              <span className="hidden sm:inline">Dashboard</span>
+              <span className="hidden sm:inline">{dashboardMode ? 'Exit Dashboard' : 'Dashboard'}</span>
             </button>
           )}
 

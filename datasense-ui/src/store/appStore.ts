@@ -143,14 +143,40 @@ interface AppState {
   setDashboardMode: (on: boolean) => void
   setDashboardProject: (id: number | null) => void
   setDashboardView: (view: 'overview' | 'project' | 'interviewers') => void
+
+  // session restore
+  sessionRestored: boolean
+  sessionRestoredAt: string | null
+  dismissSessionRestore: () => void
 }
 
+const SESSION_KEY = 'sl_session'
+const SESSION_TTL_MS = 8 * 60 * 60 * 1000
+
+function _loadSession() {
+  try {
+    const raw = sessionStorage.getItem(SESSION_KEY)
+    if (!raw) return null
+    const s = JSON.parse(raw)
+    if (!s.ts || Date.now() - s.ts > SESSION_TTL_MS) { sessionStorage.removeItem(SESSION_KEY); return null }
+    return s
+  } catch { return null }
+}
+
+function _saveSession(state: { fileId: string | null; filename: string | null; rowCount: number | null; columnCount: number | null; columnNames: string[]; results: AppState['results']; config: AppState['config'] }) {
+  try {
+    sessionStorage.setItem(SESSION_KEY, JSON.stringify({ ...state, ts: Date.now() }))
+  } catch { /* quota exceeded or private mode */ }
+}
+
+const _session = _loadSession()
+
 export const useAppStore = create<AppState>((set) => ({
-  fileId: null,
-  filename: null,
-  rowCount: null,
-  columnCount: null,
-  columnNames: [],
+  fileId: _session?.fileId ?? null,
+  filename: _session?.filename ?? null,
+  rowCount: _session?.rowCount ?? null,
+  columnCount: _session?.columnCount ?? null,
+  columnNames: _session?.columnNames ?? [],
   dtypes: {},
   previewRows: [],
 
@@ -159,8 +185,8 @@ export const useAppStore = create<AppState>((set) => ({
   jobProgress: 0,
   jobError: null,
 
-  results: null,
-  config: structuredClone(DEFAULT_CONFIG),
+  results: _session?.results ?? null,
+  config: _session?.config ? structuredClone(_session.config) : structuredClone(DEFAULT_CONFIG),
   savedProfiles: loadProfiles(),
 
   logicCheckSets: [{ id: 1, name: 'Check Set 1', rules: [{ id: 1, if_conditions: [{ id: 1, col: '', op: '==', val: '', connector: 'AND' as const }], then_cols: [], then_op: 'is_null', then_val: '', description: '' }], result: null, isRunning: false }],
@@ -177,6 +203,8 @@ export const useAppStore = create<AppState>((set) => ({
   dashboardMode: false,
   dashboardProjectId: null,
   dashboardView: 'overview' as const,
+  sessionRestored: !!_session?.results,
+  sessionRestoredAt: _session ? new Date(_session.ts).toLocaleString() : null,
   demosOpen: false,
   settingsOpen: false,
   theme: (localStorage.getItem('ds_theme') as 'dark' | 'light' | 'midnight') ?? 'dark',
@@ -205,7 +233,10 @@ export const useAppStore = create<AppState>((set) => ({
 
   setJobError: (err) => set({ jobStatus: 'failed', jobError: err }),
 
-  setResults: (r) => set({ results: r, jobStatus: 'complete', jobProgress: 100 }),
+  setResults: (r) => set((s) => {
+    _saveSession({ fileId: s.fileId, filename: s.filename, rowCount: s.rowCount, columnCount: s.columnCount, columnNames: s.columnNames, results: r, config: s.config })
+    return { results: r, jobStatus: 'complete', jobProgress: 100 }
+  }),
 
   updateConfig: (patch) =>
     set((s) => ({ config: { ...s.config, ...patch } })),
@@ -278,19 +309,27 @@ export const useAppStore = create<AppState>((set) => ({
     set({ accent: a })
   },
 
-  clearFile: () =>
+  clearFile: () => {
+    sessionStorage.removeItem(SESSION_KEY)
     set({
       fileId: null, filename: null, rowCount: null, columnCount: null,
       columnNames: [], dtypes: {}, previewRows: [],
       jobId: null, jobStatus: 'idle', jobProgress: 0, jobError: null,
       results: null, supplementalChecks: [], activeTab: 'QC Report',
-    }),
+      sessionRestored: false, sessionRestoredAt: null,
+    })
+  },
 
-  reset: () =>
+  reset: () => {
+    sessionStorage.removeItem(SESSION_KEY)
     set({
       fileId: null, filename: null, rowCount: null, columnCount: null,
       columnNames: [], dtypes: {}, previewRows: [],
       jobId: null, jobStatus: 'idle', jobProgress: 0, jobError: null,
       results: null, config: structuredClone(DEFAULT_CONFIG), activeTab: 'QC Report',
-    }),
+      sessionRestored: false, sessionRestoredAt: null,
+    })
+  },
+
+  dismissSessionRestore: () => set({ sessionRestored: false, sessionRestoredAt: null }),
 }))

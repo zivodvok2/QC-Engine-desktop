@@ -145,4 +145,23 @@ async def save_qc_results(
     upload_id = shared_db.insert_quality_records(
         project_id, user["id"], req.filename, records, req.wave_label
     )
-    return {"status": "ok", "upload_id": upload_id, "row_count": len(records)}
+
+    # Seed interviewer registry with any new codes found in this file
+    known_codes = shared_db.get_interviewer_code_set()
+    new_codes = {
+        str(r["interviewer_id"]) for r in records
+        if r.get("interviewer_id") and str(r["interviewer_id"]) not in known_codes
+    }
+    for code in new_codes:
+        try:
+            shared_db.upsert_interviewer(code)
+        except Exception:
+            pass
+
+    return {
+        "status": "ok",
+        "upload_id": upload_id,
+        "row_count": len(records),
+        "new_interviewers": len(new_codes),
+        "known_interviewers": len(known_codes & {str(r.get("interviewer_id", "")) for r in records}),
+    }

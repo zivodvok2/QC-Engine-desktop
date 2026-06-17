@@ -1,10 +1,12 @@
 import React, { useState } from 'react'
 import { Play, ChevronDown, ChevronRight, Sparkles, AlertCircle, Wifi, WifiOff, Clapperboard, Eye, EyeOff, Settings, Mail, RotateCcw, Info } from 'lucide-react'
+import { useQueryClient } from '@tanstack/react-query'
 import { FileUpload } from '../upload/FileUpload'
 import { relaunchOnboarding } from '../onboarding/OnboardingTooltip'
 import { useAppStore } from '../../store/appStore'
 import { useQCRun } from '../../hooks/useQCRun'
 import { useHealth } from '../../hooks/useHealth'
+import type { ProjectSummary } from '../../api/dashboard'
 
 const GROQ_MODELS = [
   'llama-3.1-8b-instant',
@@ -53,7 +55,11 @@ export function Sidebar() {
   const { config, updateConfig, fileId, jobStatus, jobProgress, jobError,
           setActiveTab, openDemos, openSettings,
           theme, setTheme, accent, setAccent,
-          groqApiKey, setGroqApiKey } = useAppStore()
+          groqApiKey, setGroqApiKey, authUser } = useAppStore()
+  const qcl = useQueryClient()
+  const dashSummary: ProjectSummary[] = qcl.getQueryData(['dash-summary']) ?? []
+  const activeProjects = dashSummary.filter(p => p.status === 'active').length
+  const totalFlagged = dashSummary.reduce((s, p) => s + (p.flagged ?? 0), 0)
   const [showKey, setShowKey] = useState(false)
   const [localKey, setLocalKey] = useState(groqApiKey)
   const [aboutOpen, setAboutOpen] = useState(false)
@@ -400,6 +406,22 @@ export function Sidebar() {
           </button>
         </div>
       </Section>
+
+      {/* Quick project stats — shown when logged in and summary is cached */}
+      {authUser && dashSummary.length > 0 && (
+        <div className="px-4 py-2.5 border-t border-line">
+          <div className="flex items-center gap-1.5 text-[10px]">
+            <span className="text-accent font-bold">{activeProjects}</span>
+            <span className="text-muted">active project{activeProjects !== 1 ? 's' : ''}</span>
+            <span className="text-line mx-1">·</span>
+            {totalFlagged > 0 ? (
+              <><span className="text-critical font-bold">{totalFlagged}</span><span className="text-muted ml-1">flagged</span></>
+            ) : (
+              <span className="text-accent">0 flagged</span>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Demos quick link */}
       <div className="px-4 py-3 border-t border-line">

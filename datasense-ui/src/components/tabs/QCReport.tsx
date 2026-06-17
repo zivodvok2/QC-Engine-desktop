@@ -5,6 +5,7 @@ import { useAppStore } from '../../store/appStore'
 import { downloadReport } from '../../api/qc'
 import { explainFlags, generateQCSummary } from '../../api/ai'
 import { getProjects, createProject, saveQCResults } from '../../api/projects'
+import { getUploadLog } from '../../api/dashboard'
 import type { CheckResult } from '../../types'
 import type { Project } from '../../api/projects'
 
@@ -135,14 +136,16 @@ function CheckAccordion({
 }
 
 function SaveToProject() {
-  const { authUser, authToken, fileId, filename, openLogin } = useAppStore()
+  const { authUser, authToken, fileId, filename, openLogin, setDashboardMode, setDashboardProject } = useAppStore()
   const [expanded, setExpanded] = useState(false)
   const [mode, setMode] = useState<'pick' | 'new'>('pick')
   const [selectedId, setSelectedId] = useState<number | ''>('')
   const [newName, setNewName] = useState('')
   const [waveLabel, setWaveLabel] = useState('')
   const [saved, setSaved] = useState(false)
+  const [savedProjectId, setSavedProjectId] = useState<number | null>(null)
   const [saveError, setSaveError] = useState('')
+  const [suggestedWave, setSuggestedWave] = useState('')
 
   const projectsQuery = useQuery<Project[]>({
     queryKey: ['projects', authToken],
@@ -165,7 +168,9 @@ function SaveToProject() {
         projectId = Number(selectedId)
       }
 
-      return saveQCResults(projectId, fileId, filename, authToken, waveLabel.trim() || undefined)
+      const result = await saveQCResults(projectId, fileId, filename, authToken, waveLabel.trim() || undefined)
+      setSavedProjectId(projectId)
+      return result
     },
     onSuccess: () => {
       setSaved(true)
@@ -175,6 +180,28 @@ function SaveToProject() {
       setSaveError((err as Error).message)
     },
   })
+
+  // Suggest next wave label when a project is selected
+  const { data: uploadLog } = useQuery({
+    queryKey: ['upload-log-wave', selectedId, authToken],
+    queryFn: () => getUploadLog(Number(selectedId), authToken!),
+    enabled: !!authToken && !!selectedId && mode === 'pick',
+  })
+
+  useEffect(() => {
+    if (!uploadLog) return
+    const waveLabels = uploadLog
+      .map((u: { wave_label?: string | null }) => u.wave_label)
+      .filter((l): l is string => !!l)
+    const nums = waveLabels
+      .map((l: string) => { const m = l.match(/\d+/); return m ? parseInt(m[0]) : 0 })
+      .filter((n: number) => n > 0)
+    if (nums.length > 0) {
+      setSuggestedWave(`Wave ${Math.max(...nums) + 1}`)
+    } else if (waveLabels.length > 0) {
+      setSuggestedWave('')
+    }
+  }, [uploadLog])
 
   if (!authUser) {
     return (
@@ -192,9 +219,19 @@ function SaveToProject() {
 
   if (saved) {
     return (
-      <div className="card p-4 flex items-center gap-2 text-accent text-sm">
-        <Check size={14} />
-        Results saved to project — visible on the dashboard.
+      <div className="card p-4 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 text-accent text-sm">
+          <Check size={14} />
+          Results saved to project.
+        </div>
+        {savedProjectId !== null && (
+          <button
+            onClick={() => { setDashboardMode(true); setDashboardProject(savedProjectId) }}
+            className="btn-ghost text-xs flex items-center gap-1.5"
+          >
+            <Database size={12} /> View in Dashboard
+          </button>
+        )}
       </div>
     )
   }
@@ -259,13 +296,24 @@ function SaveToProject() {
             />
           )}
 
-          <input
-            type="text"
-            value={waveLabel}
-            onChange={(e) => setWaveLabel(e.target.value)}
-            placeholder="Wave label (optional, e.g. Wave 1)"
-            className="w-full bg-surface2 border border-line rounded-lg px-3 py-2 text-sm text-tx placeholder:text-muted focus:outline-none focus:border-accent"
-          />
+          <div className="relative">
+            <input
+              type="text"
+              value={waveLabel}
+              onChange={(e) => setWaveLabel(e.target.value)}
+              placeholder={suggestedWave ? `Suggested: ${suggestedWave}` : 'Wave label (optional, e.g. Wave 1)'}
+              className="w-full bg-surface2 border border-line rounded-lg px-3 py-2 text-sm text-tx placeholder:text-muted focus:outline-none focus:border-accent"
+            />
+            {suggestedWave && !waveLabel && (
+              <button
+                type="button"
+                onClick={() => setWaveLabel(suggestedWave)}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-accent border border-accent/40 rounded px-1.5 py-0.5 hover:bg-accent/10"
+              >
+                Use {suggestedWave}
+              </button>
+            )}
+          </div>
 
           {saveError && (
             <p className="text-xs text-critical bg-critical/10 border border-critical/30 rounded px-3 py-2">{saveError}</p>

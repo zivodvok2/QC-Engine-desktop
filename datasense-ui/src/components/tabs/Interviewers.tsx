@@ -6,13 +6,14 @@ import {
 } from 'recharts'
 import {
   Users, AlertTriangle, Download, Sparkles, ChevronDown, ChevronUp,
-  CheckCircle2, LayoutDashboard, TrendingUp,
+  CheckCircle2, LayoutDashboard, TrendingUp, Loader2,
 } from 'lucide-react'
 import { useAppStore } from '../../store/appStore'
 import { computeRisk, type RiskRow } from '../../api/interviewers'
 import { generateFeedbackLetter } from '../../api/ai'
 import { addSupplemental } from '../../api/qc'
 import { InterviewerProfile } from './InterviewerProfile'
+import { getInterviewerMetrics, type InterviewerMetrics } from '../../api/dashboard'
 
 const TOOLTIP_STYLE = {
   contentStyle: { background: '#111318', border: '1px solid #1f2330', borderRadius: 6 },
@@ -24,6 +25,12 @@ function riskColor(score: number, red: number, amber: number) {
   if (score >= red) return '#f04a6a'
   if (score >= amber) return '#f0c04a'
   return '#4af0a0'
+}
+
+function riskScoreClass(score: number, red: number, amber: number) {
+  if (score >= red) return 'text-critical'
+  if (score >= amber) return 'text-warning'
+  return 'text-accent'
 }
 
 function riskBadge(level: string) {
@@ -189,7 +196,7 @@ function RiskDashboard({
 // ── Main component ────────────────────────────────────────────────────────────
 
 export function Interviewers() {
-  const { fileId, jobId, jobStatus, config, groqApiKey, itvTabState, setItvTabState } = useAppStore()
+  const { fileId, jobId, jobStatus, config, groqApiKey, itvTabState, setItvTabState, authToken } = useAppStore()
   const { intCol, redThr, amberThr, flagThr, rows, intColName, selectedInt,
           supervisorCol, dateCol, dateTrends } = itvTabState
 
@@ -206,11 +213,14 @@ export function Interviewers() {
   const [showMethods, setShowMethods] = useState(false)
   const [reportPushed, setReportPushed] = useState(false)
   const [profileRow, setProfileRow]   = useState<RiskRow | null>(null)
+  const [dbMetrics, setDbMetrics]     = useState<Record<string, InterviewerMetrics>>({})
+  const [dbLoading, setDbLoading]     = useState(false)
 
   const riskMutation = useMutation({
     mutationFn: () => computeRisk(fileId!, jobId!, intCol, redThr, amberThr,
                                   supervisorCol || undefined, dateCol || undefined),
-    onSuccess: (data) => {
+    onSuccess: async (data) => {
+      setDbMetrics({})
       setItvTabState({
         rows: data.rows as unknown as Record<string, unknown>[],
         intColName: data.interviewer_column,
@@ -227,10 +237,54 @@ export function Interviewers() {
           flagged_rows: data.rows.filter((r: RiskRow) => r.risk_level !== 'LOW') as unknown as Record<string, unknown>[],
         }).then(() => setReportPushed(true)).catch(() => { /* non-blocking */ })
       }
+      if (authToken && data.rows.length > 0) {
+        setDbLoading(true)
+        const codes = [...new Set(
+          (data.rows as RiskRow[]).map(r => String(r[data.interviewer_column] ?? '')).filter(Boolean)
+        )]
+        const results = await Promise.allSettled(
+          codes.map(code =>
+            getInterviewerMetrics(code, authToken).then(m => [code, m] as [string, InterviewerMetrics])
+          )
+        )
+        const metrics: Record<string, InterviewerMetrics> = {}
+        results.forEach(r => {
+          if (r.status === 'fulfilled') { const [c, m] = r.value; metrics[c] = m }
+        })
+        setDbMetrics(metrics)
+        setDbLoading(false)
+      }
     },
   })
 
   const typedRows = rows as unknown as RiskRow[]
+
+  type EnrichedRow = RiskRow & {
+    composite_score?: number
+    db_supervisor?: string | null
+    cross_project_interviews?: number
+    by_project?: InterviewerMetrics['by_project']
+  }
+
+  const hasDbMetrics = Object.keys(dbMetrics).length > 0
+
+  const enrichedRows: EnrichedRow[] = typedRows.map(row => {
+    const code = String(row[intColName] ?? '')
+    const m = dbMetrics[code]
+    if (!m) return row as EnrichedRow
+    const total = m.quality.total_interviews
+    const flagged = m.quality.duration_flags + m.quality.sl_flags
+    const crossFlagRate = total > 0 ? (flagged / total) * 100 : 0
+    const bcErrRate = m.backcheck.bc_count > 0 ? (m.backcheck.total_errors / m.backcheck.bc_count) * 100 : 0
+    const liFailRate = m.listen_in.li_count > 0 ? (m.listen_in.li_fail / m.listen_in.li_count) * 100 : 0
+    return {
+      ...row,
+      db_supervisor: m.info?.supervisor_name ?? null,
+      cross_project_interviews: total,
+      composite_score: Math.min(Math.round(row.risk_score * 0.4 + crossFlagRate * 0.3 + bcErrRate * 0.2 + liFailRate * 0.1), 100),
+      by_project: m.by_project,
+    } as EnrichedRow
+  })
 
   const letterMutation = useMutation({
     mutationFn: () => {
@@ -247,8 +301,10 @@ export function Interviewers() {
   const medium = typedRows.filter((r) => r.risk_score >= amberThr && r.risk_score < redThr).length
   const low    = typedRows.filter((r) => r.risk_score < amberThr).length
   const aboveFlagThr = typedRows.filter((r) => r.flag_rate_pct > flagThr).length
-  const top20  = typedRows.slice(0, 20)
+  const top20  = enrichedRows.slice(0, 20)
   const hasSupervisors = typedRows.some((r) => r.supervisor && r.supervisor !== 'None' && r.supervisor !== 'null')
+  const hasDbSupervisors = hasDbMetrics && enrichedRows.some(r => r.db_supervisor)
+  const showSupervisorCol = hasSupervisors || hasDbSupervisors
 
   // Supervisors who have 2+ HIGH risk interviewers
   const supervisorHighCounts = typedRows
@@ -364,9 +420,19 @@ export function Interviewers() {
           <Users size={14} />
           {riskMutation.isPending ? 'Computing…' : 'Compute Risk Scores'}
         </button>
-        {reportPushed && !riskMutation.isPending && (
+        {reportPushed && !riskMutation.isPending && !dbLoading && (
           <span className="flex items-center gap-1.5 text-xs text-accent">
             <CheckCircle2 size={13} /> Added to report
+          </span>
+        )}
+        {dbLoading && (
+          <span className="flex items-center gap-1.5 text-xs text-muted">
+            <Loader2 size={12} className="animate-spin" /> Fetching cross-project data…
+          </span>
+        )}
+        {hasDbMetrics && !dbLoading && (
+          <span className="flex items-center gap-1.5 text-xs text-accent/70">
+            <CheckCircle2 size={12} /> Cross-project enriched ({Object.keys(dbMetrics).length} IDs)
           </span>
         )}
       </div>
@@ -410,28 +476,30 @@ export function Interviewers() {
                     <th className="text-left py-2 px-3 text-muted font-normal">#</th>
                     {[
                       intColName,
-                      ...(hasSupervisors ? ['supervisor'] : []),
-                      'risk_score', 'risk_level', 'total_interviews', 'total_flags',
-                      'flag_rate_pct', 'fabrication_flags', 'duration_flags',
-                      'straightlining_flags', 'productivity_flags', 'verbatim_flags',
+                      ...(showSupervisorCol ? ['Supervisor'] : []),
+                      'risk score',
+                      ...(hasDbMetrics ? ['QC Score ★'] : []),
+                      'risk level', 'total interviews', 'total flags',
+                      'flag rate %', 'fabrication', 'duration',
+                      'straightlining', 'productivity', 'verbatim',
                     ].map((c) => (
                       <th key={c} className="text-left py-2 px-3 text-muted font-normal whitespace-nowrap">
-                        {c.replace(/_/g, ' ')}
+                        {c}
                       </th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {typedRows.map((row, i) => {
-                    const sup = row.supervisor && row.supervisor !== 'None' && row.supervisor !== 'null'
-                      ? String(row.supervisor)
-                      : null
-                    const isFlaggedSup = sup && flaggedSupervisors.has(sup)
+                  {enrichedRows.map((row, i) => {
+                    const localSup = row.supervisor && row.supervisor !== 'None' && row.supervisor !== 'null'
+                      ? String(row.supervisor) : null
+                    const displaySup = localSup ?? row.db_supervisor ?? null
+                    const isFlaggedSup = displaySup && flaggedSupervisors.has(displaySup)
+                    const displayScore = row.composite_score ?? row.risk_score
 
                     return (
                       <tr key={i} className="border-b border-line/50 hover:bg-surface2 transition-colors">
                         <td className="py-2 px-3 text-muted">{i + 1}</td>
-                        {/* Clickable interviewer ID */}
                         <td className="py-2 px-3">
                           <button
                             className="font-medium text-accent hover:underline"
@@ -440,40 +508,39 @@ export function Interviewers() {
                             {String(row[intColName] ?? '')}
                           </button>
                         </td>
-                        {/* Supervisor — highlighted if they have 2+ HIGH-risk interviewers */}
-                        {hasSupervisors && (
+                        {showSupervisorCol && (
                           <td className="py-2 px-3">
-                            {sup ? (
+                            {displaySup ? (
                               <span
                                 className={`px-2 py-0.5 rounded text-[10px] font-medium ${
                                   isFlaggedSup
                                     ? 'bg-critical/15 text-critical border border-critical/30'
                                     : 'text-tx'
                                 }`}
-                                title={isFlaggedSup ? 'This supervisor has 2+ high-risk interviewers' : ''}
+                                title={isFlaggedSup ? 'This supervisor has 2+ high-risk interviewers' : !localSup && row.db_supervisor ? 'From global database' : ''}
                               >
-                                {sup}
-                                {isFlaggedSup && ' ⚠'}
+                                {displaySup}{isFlaggedSup && ' ⚠'}
+                                {!localSup && row.db_supervisor && <span className="text-accent/50 ml-1 text-[9px]">·db</span>}
                               </span>
                             ) : (
                               <span className="text-muted">—</span>
                             )}
                           </td>
                         )}
-                        {/* Risk score with mini bar */}
                         <td className="py-2 px-3">
                           <div className="flex items-center gap-1.5">
-                            <div
-                              className="h-1.5 rounded-full"
-                              style={{
-                                width: `${Math.min(row.risk_score, 100)}%`,
-                                maxWidth: 60,
-                                background: riskColor(row.risk_score, redThr, amberThr),
-                              }}
-                            />
+                            <div className="h-1.5 rounded-full" style={{ width: `${Math.min(row.risk_score, 100)}%`, maxWidth: 60, background: riskColor(row.risk_score, redThr, amberThr) }} />
                             <span className="text-tx">{row.risk_score}</span>
                           </div>
                         </td>
+                        {hasDbMetrics && (
+                          <td className="py-2 px-3">
+                            <div className="flex items-center gap-1.5">
+                              <div className="h-1.5 rounded-full" style={{ width: `${Math.min(displayScore, 100)}%`, maxWidth: 60, background: riskColor(displayScore, redThr, amberThr) }} />
+                              <span className={`font-semibold ${riskScoreClass(displayScore, redThr, amberThr)}`}>{displayScore}</span>
+                            </div>
+                          </td>
+                        )}
                         <td className="py-2 px-3">
                           <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${riskBadge(row.risk_level)}`}>
                             {row.risk_level}
@@ -624,6 +691,27 @@ export function Interviewers() {
                 <p className="text-xs text-muted mt-2">
                   Each component contributes points proportional to that interviewer's flag rate (flags ÷ total interviews × weight). Scores are summed and capped at 100.
                 </p>
+                {hasDbMetrics && (
+                  <div className="mt-3 pt-3 border-t border-line">
+                    <p className="text-xs font-medium text-tx mb-2">QC Score ★ (composite — requires login)</p>
+                    <table className="w-full text-xs">
+                      <tbody>
+                        {[
+                          ['Local risk score',        '40%', 'this file'],
+                          ['Cross-project flag rate', '30%', 'global database'],
+                          ['Back-check error rate',   '20%', 'global database'],
+                          ['Listen-in fail rate',     '10%', 'global database'],
+                        ].map(([comp, w, src]) => (
+                          <tr key={comp} className="border-b border-line/50">
+                            <td className="py-1.5 px-2 text-tx">{comp}</td>
+                            <td className="py-1.5 px-2 text-accent font-medium">{w}</td>
+                            <td className="py-1.5 px-2 text-muted">{src}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
             )}
           </div>

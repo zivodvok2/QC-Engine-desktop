@@ -6,10 +6,13 @@ import { getDashboardSummary, type ProjectSummary } from '../../api/dashboard'
 import { QualityReportTab } from './tabs/QualityReportTab'
 import { BackcheckTab } from './tabs/BackcheckTab'
 import { ListenInTab } from './tabs/ListenInTab'
+import { PerformanceTab } from './tabs/PerformanceTab'
+import { TimingTab } from './tabs/TimingTab'
+import { CancelledTab } from './tabs/CancelledTab'
 import { AdminTab } from './tabs/AdminTab'
 import { CombinedReportTab } from './tabs/CombinedReportTab'
 
-type SubTab = 'quality' | 'backcheck' | 'listenin' | 'combined' | 'admin'
+type SubTab = 'quality' | 'backcheck' | 'listenin' | 'performance' | 'timing' | 'cancelled' | 'combined' | 'admin'
 
 const ADMIN_ROLES = new Set(['qc_executive', 'operations_manager'])
 
@@ -31,10 +34,13 @@ export function ProjectDetail({ id }: Props) {
   const isAdmin = authUser && ADMIN_ROLES.has(authUser.role)
 
   const tabs: { key: SubTab; label: string }[] = [
-    { key: 'quality', label: 'Quality Report' },
-    { key: 'backcheck', label: 'Back-check' },
-    { key: 'listenin', label: 'Listen-in' },
-    { key: 'combined', label: 'Combined Report' },
+    { key: 'quality',      label: 'Quality Report' },
+    { key: 'backcheck',    label: 'Back-check' },
+    { key: 'listenin',     label: 'Listen-in' },
+    { key: 'performance',  label: 'Performance' },
+    { key: 'timing',       label: 'Timing' },
+    { key: 'cancelled',    label: 'Cancelled' },
+    { key: 'combined',     label: 'Combined Report' },
     ...(isAdmin ? [{ key: 'admin' as SubTab, label: 'Admin' }] : []),
   ]
 
@@ -134,11 +140,14 @@ export function ProjectDetail({ id }: Props) {
       </div>
 
       {/* Tab content */}
-      {subTab === 'quality' && <QualityReportTab projectId={id} />}
-      {subTab === 'backcheck' && <BackcheckTab projectId={id} target={project.backcheck_target} />}
-      {subTab === 'listenin' && <ListenInTab projectId={id} target={project.listenin_target} />}
-      {subTab === 'combined' && <CombinedReportTab projectId={id} />}
-      {subTab === 'admin' && isAdmin && <AdminTab projectId={id} />}
+      {subTab === 'quality'      && <QualityReportTab projectId={id} />}
+      {subTab === 'backcheck'    && <BackcheckTab projectId={id} target={project.backcheck_target} />}
+      {subTab === 'listenin'     && <ListenInTab projectId={id} target={project.listenin_target} />}
+      {subTab === 'performance'  && <PerformanceTab projectId={id} />}
+      {subTab === 'timing'       && <TimingTab projectId={id} loiMin={project.loi_min_minutes ?? undefined} />}
+      {subTab === 'cancelled'    && <CancelledTab projectId={id} />}
+      {subTab === 'combined'     && <CombinedReportTab projectId={id} />}
+      {subTab === 'admin'        && isAdmin && <AdminTab projectId={id} />}
     </div>
   )
 }

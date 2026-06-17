@@ -1,17 +1,20 @@
-import React, { useState } from 'react'
+import React, { useState, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { UserPlus, Loader2, Trash2, UserCheck, UserX, Plus } from 'lucide-react'
+import { UserPlus, Loader2, Trash2, UserCheck, UserX, Plus, Search, Upload } from 'lucide-react'
 import { useAppStore } from '../../../store/appStore'
 import {
   getDashboardUsers, createDashboardUser, updateUserRole, toggleUserActive,
   createProjectFull, updateProject, getProjectAssignees, assignUser, removeAssignee,
   deleteUpload, getAllUploads, getDashboardSummary,
+  getSupervisors, createSupervisor, deleteSupervisor,
+  getInterviewers, upsertInterviewer,
   type DashboardUser, type ProjectAssignee, type ProjectSummary, type UploadLogEntry,
+  type Supervisor, type Interviewer,
 } from '../../../api/dashboard'
 
 const ROLES = ['qc_executive', 'operations_manager', 'qc_officer', 'project_manager', 'researcher', 'management', 'other']
 
-type AdminSection = 'users' | 'projects' | 'assignments' | 'uploads'
+type AdminSection = 'users' | 'projects' | 'assignments' | 'uploads' | 'supervisors' | 'interviewers'
 
 interface Props { projectId?: number }
 
@@ -125,11 +128,110 @@ export function AdminTab({ projectId }: Props) {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['dash-all-uploads'] }),
   })
 
+  // ── Supervisors ───────────────────────────────────────────────────────────────
+
+  const { data: supervisors = [], isLoading: supLoading } = useQuery({
+    queryKey: ['dash-supervisors'],
+    queryFn: () => getSupervisors(token),
+    enabled: !!token,
+  })
+
+  const [newSupervisor, setNewSupervisor] = useState({ name: '', email: '', phone: '', region: '' })
+
+  const createSupMut = useMutation({
+    mutationFn: () => createSupervisor({
+      name: newSupervisor.name,
+      email: newSupervisor.email || null,
+      phone: newSupervisor.phone || null,
+      region: newSupervisor.region || null,
+    }, token),
+    onSuccess: () => {
+      setNewSupervisor({ name: '', email: '', phone: '', region: '' })
+      qc.invalidateQueries({ queryKey: ['dash-supervisors'] })
+    },
+  })
+
+  const delSupMut = useMutation({
+    mutationFn: (id: number) => deleteSupervisor(id, token),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['dash-supervisors'] }),
+  })
+
+  // ── Interviewers Registry ─────────────────────────────────────────────────────
+
+  const { data: interviewers = [], isLoading: itvLoading } = useQuery({
+    queryKey: ['dash-interviewers'],
+    queryFn: () => getInterviewers(token),
+    enabled: !!token,
+  })
+
+  const [newInterviewer, setNewInterviewer] = useState({
+    interviewer_code: '', name: '', supervisor_id: null as number | null, region: '',
+  })
+  const [itvSearch, setItvSearch] = useState('')
+  const [csvStatus, setCsvStatus] = useState<string | null>(null)
+  const csvInputRef = useRef<HTMLInputElement>(null)
+
+  const upsertItvMut = useMutation({
+    mutationFn: () => upsertInterviewer({
+      interviewer_code: newInterviewer.interviewer_code,
+      name: newInterviewer.name || undefined,
+      supervisor_id: newInterviewer.supervisor_id,
+      region: newInterviewer.region || undefined,
+    }, token),
+    onSuccess: () => {
+      setNewInterviewer({ interviewer_code: '', name: '', supervisor_id: null, region: '' })
+      qc.invalidateQueries({ queryKey: ['dash-interviewers'] })
+    },
+  })
+
+  const toggleItvMut = useMutation({
+    mutationFn: ({ code, active }: { code: string; active: number }) =>
+      upsertInterviewer({ interviewer_code: code, is_active: active }, token),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['dash-interviewers'] }),
+  })
+
+  function handleCsvImport(file: File) {
+    setCsvStatus('Parsing…')
+    const reader = new FileReader()
+    reader.onload = async e => {
+      const text = (e.target?.result as string).trim()
+      const lines = text.split('\n')
+      const headers = lines[0].split(',').map(h => h.trim().toLowerCase().replace(/\s+/g, '_'))
+      const rows = lines.slice(1)
+        .map(l => {
+          const vals = l.split(',').map(v => v.trim())
+          const obj: Record<string, string> = {}
+          headers.forEach((h, i) => { obj[h] = vals[i] ?? '' })
+          return obj
+        })
+        .filter(r => r.interviewer_code)
+      let ok = 0
+      for (const row of rows) {
+        try {
+          await upsertInterviewer({ interviewer_code: row.interviewer_code, name: row.name || undefined, region: row.region || undefined }, token)
+          ok++
+        } catch { /* skip invalid */ }
+      }
+      setCsvStatus(`Imported ${ok} of ${rows.length}`)
+      qc.invalidateQueries({ queryKey: ['dash-interviewers'] })
+    }
+    reader.readAsText(file)
+  }
+
+  const filteredInterviewers = (interviewers as Interviewer[]).filter(itv =>
+    !itvSearch ||
+    itv.interviewer_code.toLowerCase().includes(itvSearch.toLowerCase()) ||
+    (itv.name?.toLowerCase() ?? '').includes(itvSearch.toLowerCase()) ||
+    (itv.supervisor_name?.toLowerCase() ?? '').includes(itvSearch.toLowerCase())
+  )
+
   const sections: { key: AdminSection; label: string }[] = [
     { key: 'users', label: 'Users' },
     { key: 'projects', label: 'Projects' },
     { key: 'assignments', label: 'Assignments' },
     { key: 'uploads', label: 'Upload History' },
+    { key: 'supervisors', label: 'Supervisors' },
+    { key: 'interviewers', label: 'Interviewers' },
   ]
 
   return (
@@ -425,6 +527,221 @@ export function AdminTab({ projectId }: Props) {
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Supervisors section */}
+      {section === 'supervisors' && (
+        <div className="space-y-4">
+          <div className="card p-4 space-y-3">
+            <p className="label">Add Supervisor</p>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              {[
+                { key: 'name', label: 'Name *', type: 'text' },
+                { key: 'email', label: 'Email', type: 'email' },
+                { key: 'phone', label: 'Phone', type: 'text' },
+                { key: 'region', label: 'Region', type: 'text' },
+              ].map(f => (
+                <div key={f.key}>
+                  <label className="label mb-1 block">{f.label}</label>
+                  <input
+                    type={f.type}
+                    value={newSupervisor[f.key as keyof typeof newSupervisor]}
+                    onChange={e => setNewSupervisor(s => ({ ...s, [f.key]: e.target.value }))}
+                    className="w-full bg-surface2 border border-line rounded-lg px-3 py-2 text-sm text-tx"
+                  />
+                </div>
+              ))}
+            </div>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => createSupMut.mutate()}
+                disabled={!newSupervisor.name || createSupMut.isPending}
+                className="btn-primary flex items-center gap-2"
+              >
+                {createSupMut.isPending ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
+                Add Supervisor
+              </button>
+              {createSupMut.isSuccess && <span className="text-xs text-accent">Added!</span>}
+              {createSupMut.isError && <span className="text-xs text-critical">{String(createSupMut.error)}</span>}
+            </div>
+          </div>
+
+          <div className="card p-4">
+            <p className="label mb-2">All Supervisors ({(supervisors as Supervisor[]).length})</p>
+            {supLoading ? (
+              <div className="flex items-center gap-2 text-muted text-sm"><Loader2 size={14} className="animate-spin" /> Loading…</div>
+            ) : (supervisors as Supervisor[]).length === 0 ? (
+              <p className="text-xs text-muted">No supervisors yet. Add one above.</p>
+            ) : (
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-line text-muted">
+                    {['Name', 'Email', 'Phone', 'Region', ''].map(h => (
+                      <th key={h} className="text-left py-1 pr-3">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {(supervisors as Supervisor[]).map(s => (
+                    <tr key={s.id} className="border-b border-line/30 hover:bg-surface2/50">
+                      <td className="py-1.5 pr-3 text-tx font-medium">{s.name}</td>
+                      <td className="py-1.5 pr-3 text-muted">{s.email ?? '—'}</td>
+                      <td className="py-1.5 pr-3 text-muted">{s.phone ?? '—'}</td>
+                      <td className="py-1.5 pr-3 text-muted">{s.region ?? '—'}</td>
+                      <td>
+                        <button
+                          onClick={() => delSupMut.mutate(s.id)}
+                          className="p-1 text-muted hover:text-critical transition-colors"
+                          title="Delete supervisor"
+                        >
+                          <Trash2 size={12} />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Interviewers Registry section */}
+      {section === 'interviewers' && (
+        <div className="space-y-4">
+          <div className="card p-4 space-y-3">
+            <p className="label">Register Interviewer</p>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div>
+                <label className="label mb-1 block">Code *</label>
+                <input
+                  value={newInterviewer.interviewer_code}
+                  onChange={e => setNewInterviewer(s => ({ ...s, interviewer_code: e.target.value }))}
+                  placeholder="e.g. ITV001"
+                  className="w-full bg-surface2 border border-line rounded-lg px-3 py-2 text-sm text-tx"
+                />
+              </div>
+              <div>
+                <label className="label mb-1 block">Name</label>
+                <input
+                  value={newInterviewer.name}
+                  onChange={e => setNewInterviewer(s => ({ ...s, name: e.target.value }))}
+                  className="w-full bg-surface2 border border-line rounded-lg px-3 py-2 text-sm text-tx"
+                />
+              </div>
+              <div>
+                <label className="label mb-1 block">Supervisor</label>
+                <select
+                  value={newInterviewer.supervisor_id ?? ''}
+                  onChange={e => setNewInterviewer(s => ({ ...s, supervisor_id: e.target.value ? Number(e.target.value) : null }))}
+                  className="w-full bg-surface2 border border-line rounded-lg px-3 py-2 text-sm text-tx"
+                >
+                  <option value="">— none —</option>
+                  {(supervisors as Supervisor[]).map(s => (
+                    <option key={s.id} value={s.id}>{s.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="label mb-1 block">Region</label>
+                <input
+                  value={newInterviewer.region}
+                  onChange={e => setNewInterviewer(s => ({ ...s, region: e.target.value }))}
+                  className="w-full bg-surface2 border border-line rounded-lg px-3 py-2 text-sm text-tx"
+                />
+              </div>
+            </div>
+            <div className="flex items-center gap-3 flex-wrap">
+              <button
+                onClick={() => upsertItvMut.mutate()}
+                disabled={!newInterviewer.interviewer_code || upsertItvMut.isPending}
+                className="btn-primary flex items-center gap-2"
+              >
+                {upsertItvMut.isPending ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
+                Register
+              </button>
+              <div className="flex items-center gap-2">
+                <input
+                  ref={csvInputRef}
+                  type="file"
+                  accept=".csv"
+                  className="hidden"
+                  onChange={e => { if (e.target.files?.[0]) handleCsvImport(e.target.files[0]) }}
+                />
+                <button
+                  onClick={() => csvInputRef.current?.click()}
+                  className="btn-ghost flex items-center gap-1.5 text-xs"
+                >
+                  <Upload size={12} /> Bulk CSV import
+                </button>
+                <span className="text-[10px] text-muted">columns: interviewer_code, name, region</span>
+              </div>
+              {csvStatus && <span className="text-xs text-accent">{csvStatus}</span>}
+              {upsertItvMut.isSuccess && <span className="text-xs text-accent">Registered!</span>}
+              {upsertItvMut.isError && <span className="text-xs text-critical">{String(upsertItvMut.error)}</span>}
+            </div>
+          </div>
+
+          <div className="card p-4 space-y-3">
+            <div className="flex items-center gap-3">
+              <p className="label flex-1">Registry ({(interviewers as Interviewer[]).length} total)</p>
+              <div className="flex items-center gap-2 bg-surface2 border border-line rounded-lg px-3 py-1.5">
+                <Search size={12} className="text-muted shrink-0" />
+                <input
+                  value={itvSearch}
+                  onChange={e => setItvSearch(e.target.value)}
+                  placeholder="Code, name, supervisor…"
+                  className="bg-transparent text-xs text-tx outline-none w-40 placeholder:text-muted"
+                />
+              </div>
+            </div>
+            {itvLoading ? (
+              <div className="flex items-center gap-2 text-muted text-sm"><Loader2 size={14} className="animate-spin" /> Loading…</div>
+            ) : (
+              <div className="overflow-x-auto max-h-[420px]">
+                <table className="w-full text-xs">
+                  <thead className="sticky top-0 bg-surface">
+                    <tr className="border-b border-line text-muted">
+                      {['Code', 'Name', 'Supervisor', 'Region', 'Status', ''].map(h => (
+                        <th key={h} className="text-left py-1 pr-3 whitespace-nowrap">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredInterviewers.slice(0, 150).map((itv: Interviewer) => (
+                      <tr key={itv.id} className="border-b border-line/30 hover:bg-surface2/50">
+                        <td className="py-1.5 pr-3 font-mono text-tx">{itv.interviewer_code}</td>
+                        <td className="py-1.5 pr-3 text-tx">{itv.name ?? '—'}</td>
+                        <td className="py-1.5 pr-3 text-muted">{itv.supervisor_name ?? '—'}</td>
+                        <td className="py-1.5 pr-3 text-muted">{itv.region ?? '—'}</td>
+                        <td className="py-1.5 pr-3">
+                          {itv.is_active
+                            ? <span className="text-accent text-xs">Active</span>
+                            : <span className="text-muted text-xs">Inactive</span>}
+                        </td>
+                        <td>
+                          <button
+                            onClick={() => toggleItvMut.mutate({ code: itv.interviewer_code, active: itv.is_active ? 0 : 1 })}
+                            className="p-1 text-muted hover:text-accent transition-colors"
+                            title={itv.is_active ? 'Deactivate' : 'Activate'}
+                          >
+                            {itv.is_active ? <UserX size={12} /> : <UserCheck size={12} />}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {filteredInterviewers.length > 150 && (
+                  <p className="text-xs text-muted mt-2 px-1">Showing 150 of {filteredInterviewers.length}. Use search to narrow results.</p>
+                )}
+                {filteredInterviewers.length === 0 && (
+                  <p className="text-xs text-muted mt-3 px-1">No interviewers found.</p>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       )}
 

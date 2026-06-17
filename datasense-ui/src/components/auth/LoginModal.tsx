@@ -1,16 +1,29 @@
 import React, { useState } from 'react'
-import { X, LogIn, Loader2 } from 'lucide-react'
+import { X, LogIn, UserPlus, Loader2 } from 'lucide-react'
 import { useAppStore } from '../../store/appStore'
-import { login } from '../../api/auth'
+import { login, register } from '../../api/auth'
+
+type Tab = 'login' | 'register'
 
 export function LoginModal() {
   const { closeLogin, loginUser } = useAppStore()
+  const [tab, setTab] = useState<Tab>('login')
+
+  // login fields
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+
+  // register fields
+  const [rName, setRName] = useState('')
+  const [rEmail, setREmail] = useState('')
+  const [rPassword, setRPassword] = useState('')
+  const [rPassword2, setRPassword2] = useState('')
+
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [success, setSuccess] = useState('')
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
     setLoading(true)
@@ -24,6 +37,25 @@ export function LoginModal() {
     }
   }
 
+  const handleRegister = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setError('')
+    setSuccess('')
+    if (rPassword !== rPassword2) { setError('Passwords do not match'); return }
+    if (rPassword.length < 8) { setError('Password must be at least 8 characters'); return }
+    setLoading(true)
+    try {
+      const res = await register(rEmail.trim().toLowerCase(), rPassword, rName.trim())
+      loginUser(res.user, res.token)
+    } catch (err) {
+      setError((err as Error).message || 'Registration failed')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const switchTab = (t: Tab) => { setTab(t); setError(''); setSuccess('') }
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
@@ -33,8 +65,12 @@ export function LoginModal() {
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-line">
           <div className="flex items-center gap-2">
-            <LogIn size={15} className="text-accent" />
-            <span className="font-display font-bold text-sm text-tx">Sign in to Servalab</span>
+            {tab === 'login'
+              ? <LogIn size={15} className="text-accent" />
+              : <UserPlus size={15} className="text-accent" />}
+            <span className="font-display font-bold text-sm text-tx">
+              {tab === 'login' ? 'Sign in to Servalab' : 'Create an account'}
+            </span>
           </div>
           <button
             onClick={closeLogin}
@@ -44,64 +80,153 @@ export function LoginModal() {
           </button>
         </div>
 
-        {/* Form */}
-        <form onSubmit={handleSubmit} className="p-5 space-y-4">
-          <p className="text-xs text-muted">
-            Use your Servalab dashboard account. Signing in lets you save QC results to projects.
-          </p>
-
-          <div className="space-y-3">
-            <div>
-              <label className="label mb-1 block">Email</label>
-              <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="you@example.com"
-                required
-                className="w-full bg-surface2 border border-line rounded-lg px-3 py-2 text-sm text-tx placeholder:text-muted focus:outline-none focus:border-accent transition-colors"
-              />
-            </div>
-            <div>
-              <label className="label mb-1 block">Password</label>
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="••••••••"
-                required
-                className="w-full bg-surface2 border border-line rounded-lg px-3 py-2 text-sm text-tx placeholder:text-muted focus:outline-none focus:border-accent transition-colors"
-              />
-            </div>
-          </div>
-
-          {error && (
-            <p className="text-xs text-critical bg-critical/10 border border-critical/30 rounded-lg px-3 py-2">
-              {error}
-            </p>
-          )}
-
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full btn-primary flex items-center justify-center gap-2"
-          >
-            {loading ? <Loader2 size={14} className="animate-spin" /> : <LogIn size={14} />}
-            {loading ? 'Signing in…' : 'Sign in'}
-          </button>
-
-          <p className="text-[11px] text-muted text-center">
-            No account?{' '}
-            <a
-              href="http://localhost:8502"
-              target="_blank"
-              rel="noreferrer"
-              className="text-accent underline underline-offset-2"
+        {/* Tab bar */}
+        <div className="flex border-b border-line">
+          {(['login', 'register'] as Tab[]).map((t) => (
+            <button
+              key={t}
+              onClick={() => switchTab(t)}
+              className={`flex-1 py-2.5 text-xs font-medium transition-colors ${
+                tab === t
+                  ? 'text-accent border-b-2 border-accent'
+                  : 'text-muted hover:text-tx'
+              }`}
             >
-              Register on the dashboard
-            </a>
-          </p>
-        </form>
+              {t === 'login' ? 'Sign In' : 'Register'}
+            </button>
+          ))}
+        </div>
+
+        {/* Login form */}
+        {tab === 'login' && (
+          <form onSubmit={handleLogin} className="p-5 space-y-4">
+            <p className="text-xs text-muted">
+              Use your Servalab account to save QC results to projects and access the dashboard.
+            </p>
+            <div className="space-y-3">
+              <div>
+                <label className="label mb-1 block">Email</label>
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="you@example.com"
+                  required
+                  className="w-full bg-surface2 border border-line rounded-lg px-3 py-2 text-sm text-tx placeholder:text-muted focus:outline-none focus:border-accent transition-colors"
+                />
+              </div>
+              <div>
+                <label className="label mb-1 block">Password</label>
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="••••••••"
+                  required
+                  className="w-full bg-surface2 border border-line rounded-lg px-3 py-2 text-sm text-tx placeholder:text-muted focus:outline-none focus:border-accent transition-colors"
+                />
+              </div>
+            </div>
+            {error && (
+              <p className="text-xs text-critical bg-critical/10 border border-critical/30 rounded-lg px-3 py-2">
+                {error}
+              </p>
+            )}
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full btn-primary flex items-center justify-center gap-2"
+            >
+              {loading ? <Loader2 size={14} className="animate-spin" /> : <LogIn size={14} />}
+              {loading ? 'Signing in…' : 'Sign in'}
+            </button>
+            <p className="text-[11px] text-muted text-center">
+              No account?{' '}
+              <button type="button" onClick={() => switchTab('register')} className="text-accent underline underline-offset-2">
+                Register here
+              </button>
+            </p>
+          </form>
+        )}
+
+        {/* Register form */}
+        {tab === 'register' && (
+          <form onSubmit={handleRegister} className="p-5 space-y-4">
+            <p className="text-xs text-muted">
+              New accounts are set to a basic role. An admin will assign your full access level.
+            </p>
+            <div className="space-y-3">
+              <div>
+                <label className="label mb-1 block">Full name</label>
+                <input
+                  type="text"
+                  value={rName}
+                  onChange={(e) => setRName(e.target.value)}
+                  placeholder="Your name"
+                  required
+                  className="w-full bg-surface2 border border-line rounded-lg px-3 py-2 text-sm text-tx placeholder:text-muted focus:outline-none focus:border-accent transition-colors"
+                />
+              </div>
+              <div>
+                <label className="label mb-1 block">Email</label>
+                <input
+                  type="email"
+                  value={rEmail}
+                  onChange={(e) => setREmail(e.target.value)}
+                  placeholder="you@example.com"
+                  required
+                  className="w-full bg-surface2 border border-line rounded-lg px-3 py-2 text-sm text-tx placeholder:text-muted focus:outline-none focus:border-accent transition-colors"
+                />
+              </div>
+              <div>
+                <label className="label mb-1 block">Password</label>
+                <input
+                  type="password"
+                  value={rPassword}
+                  onChange={(e) => setRPassword(e.target.value)}
+                  placeholder="Min. 8 characters"
+                  required
+                  className="w-full bg-surface2 border border-line rounded-lg px-3 py-2 text-sm text-tx placeholder:text-muted focus:outline-none focus:border-accent transition-colors"
+                />
+              </div>
+              <div>
+                <label className="label mb-1 block">Confirm password</label>
+                <input
+                  type="password"
+                  value={rPassword2}
+                  onChange={(e) => setRPassword2(e.target.value)}
+                  placeholder="••••••••"
+                  required
+                  className="w-full bg-surface2 border border-line rounded-lg px-3 py-2 text-sm text-tx placeholder:text-muted focus:outline-none focus:border-accent transition-colors"
+                />
+              </div>
+            </div>
+            {error && (
+              <p className="text-xs text-critical bg-critical/10 border border-critical/30 rounded-lg px-3 py-2">
+                {error}
+              </p>
+            )}
+            {success && (
+              <p className="text-xs text-accent bg-accent/10 border border-accent/30 rounded-lg px-3 py-2">
+                {success}
+              </p>
+            )}
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full btn-primary flex items-center justify-center gap-2"
+            >
+              {loading ? <Loader2 size={14} className="animate-spin" /> : <UserPlus size={14} />}
+              {loading ? 'Creating account…' : 'Create account'}
+            </button>
+            <p className="text-[11px] text-muted text-center">
+              Already have an account?{' '}
+              <button type="button" onClick={() => switchTab('login')} className="text-accent underline underline-offset-2">
+                Sign in
+              </button>
+            </p>
+          </form>
+        )}
       </div>
     </div>
   )
