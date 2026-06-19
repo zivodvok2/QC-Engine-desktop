@@ -6,7 +6,7 @@ import {
 } from 'recharts'
 import {
   Users, AlertTriangle, Download, Sparkles, ChevronDown, ChevronUp,
-  CheckCircle2, LayoutDashboard, TrendingUp, Loader2,
+  CheckCircle2, LayoutDashboard, TrendingUp, Loader2, Activity, Filter,
 } from 'lucide-react'
 import { useAppStore } from '../../store/appStore'
 import { computeRisk, type RiskRow } from '../../api/interviewers'
@@ -198,7 +198,11 @@ function RiskDashboard({
 export function Interviewers() {
   const { fileId, jobId, jobStatus, config, groqApiKey, itvTabState, setItvTabState, authToken } = useAppStore()
   const { intCol, redThr, amberThr, flagThr, rows, intColName, selectedInt,
-          supervisorCol, dateCol, dateTrends } = itvTabState
+          supervisorCol, dateCol, durationCol, dateTrends, productivityMatrix } = itvTabState
+
+  const [riskFilter, setRiskFilter] = useState<'ALL' | 'HIGH' | 'MEDIUM' | 'LOW'>('ALL')
+  const [issuesOnly, setIssuesOnly] = useState(false)
+  const [showPerf, setShowPerf] = useState(false)
 
   const defaultIntCol =
     config.interviewer_duration_check.interviewer_column ||
@@ -218,7 +222,8 @@ export function Interviewers() {
 
   const riskMutation = useMutation({
     mutationFn: () => computeRisk(fileId!, jobId!, intCol, redThr, amberThr,
-                                  supervisorCol || undefined, dateCol || undefined),
+                                  supervisorCol || undefined, dateCol || undefined,
+                                  durationCol || undefined),
     onSuccess: async (data) => {
       setDbMetrics({})
       setItvTabState({
@@ -226,6 +231,7 @@ export function Interviewers() {
         intColName: data.interviewer_column,
         selectedInt: data.rows.length > 0 ? String(data.rows[0][data.interviewer_column] ?? '') : '',
         dateTrends: data.date_trends ?? [],
+        productivityMatrix: data.productivity_matrix ?? [],
       })
       setReportPushed(false)
       if (jobId && data.rows.length > 0) {
@@ -314,7 +320,16 @@ export function Interviewers() {
   const medium = typedRows.filter((r) => r.risk_score >= amberThr && r.risk_score < redThr).length
   const low    = typedRows.filter((r) => r.risk_score < amberThr).length
   const aboveFlagThr = typedRows.filter((r) => r.flag_rate_pct > flagThr).length
-  const top20  = enrichedRows.slice(0, 20)
+  const hasDurationData = typedRows.some(r => r.avg_duration != null)
+  const hasDateData = typedRows.some(r => r.first_interview != null)
+
+  const filteredRows = enrichedRows.filter(r => {
+    if (issuesOnly && r.risk_level === 'LOW') return false
+    if (riskFilter !== 'ALL' && r.risk_level !== riskFilter) return false
+    return true
+  })
+
+  const top20  = filteredRows.slice(0, 20)
   const hasSupervisors = typedRows.some((r) => r.supervisor && r.supervisor !== 'None' && r.supervisor !== 'null')
   const hasDbSupervisors = hasDbMetrics && enrichedRows.some(r => r.db_supervisor)
   const showSupervisorCol = hasSupervisors || hasDbSupervisors
@@ -382,7 +397,7 @@ export function Interviewers() {
       </div>
 
       {/* Config row */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-3">
         <div className="space-y-1 col-span-2 sm:col-span-1 lg:col-span-1">
           <p className="text-xs text-muted">Interviewer column</p>
           <input
@@ -392,7 +407,7 @@ export function Interviewers() {
           />
         </div>
         <div className="space-y-1">
-          <p className="text-xs text-muted">Supervisor column <span className="text-muted/60">(optional)</span></p>
+          <p className="text-xs text-muted">Supervisor column <span className="text-muted/60">(opt)</span></p>
           <input
             type="text" className="w-full" value={supervisorCol}
             onChange={(e) => setItvTabState({ supervisorCol: e.target.value })}
@@ -400,11 +415,19 @@ export function Interviewers() {
           />
         </div>
         <div className="space-y-1">
-          <p className="text-xs text-muted">Date column <span className="text-muted/60">(optional)</span></p>
+          <p className="text-xs text-muted">Date column <span className="text-muted/60">(opt)</span></p>
           <input
             type="text" className="w-full" value={dateCol}
             onChange={(e) => setItvTabState({ dateCol: e.target.value })}
             placeholder="interview_date"
+          />
+        </div>
+        <div className="space-y-1">
+          <p className="text-xs text-muted">Duration column <span className="text-muted/60">(opt)</span></p>
+          <input
+            type="text" className="w-full" value={durationCol}
+            onChange={(e) => setItvTabState({ durationCol: e.target.value })}
+            placeholder="duration_minutes"
           />
         </div>
         <div className="space-y-1">
@@ -465,6 +488,46 @@ export function Interviewers() {
             <MetricCard label={`Above ${flagThr}% flag rate`} value={aboveFlagThr} />
           </div>
 
+          {/* ── Filter bar ──────────────────────────────────────────────── */}
+          <div className="flex flex-wrap items-center gap-3 py-2 border-b border-line">
+            <div className="flex items-center gap-1.5 text-xs text-muted">
+              <Filter size={12} />
+              <span>Filter:</span>
+            </div>
+            <div className="flex gap-1">
+              {(['ALL', 'HIGH', 'MEDIUM', 'LOW'] as const).map(level => (
+                <button
+                  key={level}
+                  onClick={() => setRiskFilter(level)}
+                  className={`text-[10px] px-2.5 py-1 rounded-full font-medium border transition-colors ${
+                    riskFilter === level
+                      ? level === 'HIGH' ? 'bg-critical/20 text-critical border-critical/40'
+                        : level === 'MEDIUM' ? 'bg-warning/20 text-warning border-warning/40'
+                        : level === 'LOW' ? 'bg-accent/20 text-accent border-accent/40'
+                        : 'bg-surface2 text-tx border-line'
+                      : 'text-muted border-line/50 hover:text-tx'
+                  }`}
+                >
+                  {level}
+                </button>
+              ))}
+            </div>
+            <label className="flex items-center gap-1.5 text-xs text-muted cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={issuesOnly}
+                onChange={e => setIssuesOnly(e.target.checked)}
+                className="accent-accent"
+              />
+              Issues only (hide LOW risk)
+            </label>
+            {(riskFilter !== 'ALL' || issuesOnly) && (
+              <span className="text-xs text-accent">
+                Showing {filteredRows.length} of {enrichedRows.length} interviewers
+              </span>
+            )}
+          </div>
+
           {/* ── Dashboard ───────────────────────────────────────────────── */}
           <RiskDashboard
             rows={typedRows}
@@ -495,6 +558,8 @@ export function Interviewers() {
                       'risk level', 'total interviews', 'total flags',
                       'flag rate %', 'fabrication', 'duration',
                       'straightlining', 'productivity', 'verbatim',
+                      ...(hasDurationData ? ['avg duration (min)', 'min dur', 'max dur'] : []),
+                      ...(hasDateData ? ['first interview', 'last interview'] : []),
                     ].map((c) => (
                       <th key={c} className="text-left py-2 px-3 text-muted font-normal whitespace-nowrap">
                         {c}
@@ -503,7 +568,7 @@ export function Interviewers() {
                   </tr>
                 </thead>
                 <tbody>
-                  {enrichedRows.map((row, i) => {
+                  {filteredRows.map((row, i) => {
                     const localSup = row.supervisor && row.supervisor !== 'None' && row.supervisor !== 'null'
                       ? String(row.supervisor) : null
                     const displaySup = localSup ?? row.db_supervisor ?? null
@@ -567,6 +632,19 @@ export function Interviewers() {
                         <td className="py-2 px-3 text-tx">{row.straightlining_flags}</td>
                         <td className="py-2 px-3 text-tx">{row.productivity_flags}</td>
                         <td className="py-2 px-3 text-tx">{row.verbatim_flags}</td>
+                        {hasDurationData && (
+                          <>
+                            <td className="py-2 px-3 text-tx">{row.avg_duration != null ? `${row.avg_duration} min` : '—'}</td>
+                            <td className="py-2 px-3 text-muted">{row.min_duration != null ? String(row.min_duration) : '—'}</td>
+                            <td className="py-2 px-3 text-muted">{row.max_duration != null ? String(row.max_duration) : '—'}</td>
+                          </>
+                        )}
+                        {hasDateData && (
+                          <>
+                            <td className="py-2 px-3 text-muted text-[10px]">{row.first_interview ? String(row.first_interview).slice(0, 10) : '—'}</td>
+                            <td className="py-2 px-3 text-muted text-[10px]">{row.last_interview ? String(row.last_interview).slice(0, 10) : '—'}</td>
+                          </>
+                        )}
                       </tr>
                     )
                   })}
@@ -574,6 +652,103 @@ export function Interviewers() {
               </table>
             </div>
           </div>
+
+          {/* ── Performance Metrics ──────────────────────────────────────── */}
+          {(hasDurationData || hasDateData || productivityMatrix.length > 0) && (
+            <div className="card border-line">
+              <button
+                onClick={() => setShowPerf(o => !o)}
+                className="w-full flex items-center justify-between px-4 py-3 text-sm text-tx hover:bg-surface2 transition-colors"
+              >
+                <span className="flex items-center gap-2">
+                  <Activity size={14} className="text-accent" />
+                  Performance Metrics
+                  {hasDurationData && <span className="text-xs text-muted">· duration stats</span>}
+                  {productivityMatrix.length > 0 && <span className="text-xs text-muted">· daily output</span>}
+                </span>
+                {showPerf ? <ChevronUp size={14} className="text-muted" /> : <ChevronDown size={14} className="text-muted" />}
+              </button>
+              {showPerf && (
+                <div className="border-t border-line px-4 pb-4 pt-3 space-y-4">
+                  {hasDurationData && (
+                    <div>
+                      <h4 className="text-xs font-semibold text-muted uppercase tracking-wide mb-2">Duration Performance</h4>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-xs">
+                          <thead>
+                            <tr className="border-b border-line">
+                              {[intColName, 'Total Interviews', 'Avg Duration (min)', 'Min (min)', 'Max (min)',
+                                ...(hasDateData ? ['First Interview', 'Last Interview'] : [])
+                              ].map(h => (
+                                <th key={h} className="text-left py-2 px-3 text-muted font-normal whitespace-nowrap">{h}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {filteredRows.map((row, i) => (
+                              <tr key={i} className={`border-b border-line/50 ${row.avg_duration != null && Number(row.avg_duration) < 5 ? 'bg-critical/5' : i % 2 === 0 ? 'bg-surface2/30' : ''}`}>
+                                <td className="py-2 px-3 font-medium text-accent">{String(row[intColName] ?? '')}</td>
+                                <td className="py-2 px-3 text-tx">{row.total_interviews}</td>
+                                <td className="py-2 px-3">
+                                  <span className={`font-medium ${row.avg_duration != null && Number(row.avg_duration) < 5 ? 'text-critical' : 'text-tx'}`}>
+                                    {row.avg_duration != null ? `${row.avg_duration} min` : '—'}
+                                  </span>
+                                </td>
+                                <td className="py-2 px-3 text-muted">{row.min_duration != null ? `${row.min_duration}` : '—'}</td>
+                                <td className="py-2 px-3 text-muted">{row.max_duration != null ? `${row.max_duration}` : '—'}</td>
+                                {hasDateData && (
+                                  <>
+                                    <td className="py-2 px-3 text-muted text-[10px]">{row.first_interview ? String(row.first_interview).slice(0, 10) : '—'}</td>
+                                    <td className="py-2 px-3 text-muted text-[10px]">{row.last_interview ? String(row.last_interview).slice(0, 10) : '—'}</td>
+                                  </>
+                                )}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
+                  {productivityMatrix.length > 0 && (
+                    <div>
+                      <h4 className="text-xs font-semibold text-muted uppercase tracking-wide mb-2">Daily Output (Interviews per Day)</h4>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-xs">
+                          <thead>
+                            <tr className="border-b border-line">
+                              {Object.keys(productivityMatrix[0] ?? {}).map(h => (
+                                <th key={h} className="text-left py-1.5 px-2 text-muted font-normal whitespace-nowrap">{h}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {productivityMatrix.map((row, i) => {
+                              const dateKey = Object.keys(row)[0]
+                              return (
+                                <tr key={i} className="border-b border-line/50 hover:bg-surface2 transition-colors">
+                                  {Object.entries(row).map(([k, v]) => (
+                                    <td key={k} className={`py-1.5 px-2 ${k === dateKey ? 'text-muted font-medium' : Number(v) >= 10 ? 'text-critical font-medium' : Number(v) >= 5 ? 'text-warning font-medium' : Number(v) > 0 ? 'text-accent' : 'text-muted/40'}`}>
+                                      {k === dateKey ? String(v).slice(0, 10) : (Number(v) > 0 ? String(v) : '·')}
+                                    </td>
+                                  ))}
+                                </tr>
+                              )
+                            })}
+                          </tbody>
+                        </table>
+                        <p className="text-[10px] text-muted mt-2">
+                          <span className="text-critical font-medium">≥10</span> = high output &nbsp;
+                          <span className="text-warning font-medium">5–9</span> = above average &nbsp;
+                          <span className="text-accent">1–4</span> = normal
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Bar chart — top 20 */}
           {top20.length > 1 && (

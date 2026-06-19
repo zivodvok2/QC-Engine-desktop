@@ -36,6 +36,7 @@ class RiskRequest(BaseModel):
     amber_threshold: int = 30
     supervisor_column: Optional[str] = None
     date_column: Optional[str] = None
+    duration_column: Optional[str] = None
 
 
 def _build_risk_table(
@@ -45,6 +46,8 @@ def _build_risk_table(
     red_thr: int,
     amber_thr: int,
     supervisor_col: Optional[str] = None,
+    dur_col: Optional[str] = None,
+    date_col: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     if interviewer_col not in df.columns:
         raise ValueError(f"Column '{interviewer_col}' not found in dataset")
@@ -92,6 +95,31 @@ def _build_risk_table(
         scores["total_flags"] / scores["total_interviews"].clip(lower=1) * 100
     ).round(1)
 
+    # Duration performance stats per interviewer
+    if dur_col and dur_col in df.columns:
+        num_dur = pd.to_numeric(df[dur_col], errors="coerce")
+        dur_stats = (
+            df.assign(_dur=num_dur)
+            .groupby(interviewer_col)["_dur"]
+            .agg(avg_duration="mean", min_duration="min", max_duration="max")
+            .round(1)
+        )
+        scores = scores.join(dur_stats)
+    else:
+        scores["avg_duration"] = None
+        scores["min_duration"] = None
+        scores["max_duration"] = None
+
+    # First / last interview dates per interviewer
+    if date_col and date_col in df.columns:
+        date_stats = df.groupby(interviewer_col)[date_col].agg(
+            first_interview="min", last_interview="max"
+        ).astype(str)
+        scores = scores.join(date_stats)
+    else:
+        scores["first_interview"] = None
+        scores["last_interview"] = None
+
     # Attach supervisor — most frequent supervisor value for each interviewer
     if supervisor_col and supervisor_col in df.columns:
         sup_map = (
@@ -138,17 +166,31 @@ async def interviewer_risk(req: RiskRequest):
 
     checks = (job.results or {}).get("checks", [])
 
-    def _compute(path, checks, int_col, red_thr, amber_thr, sup_col):
+    def _compute(path, checks, int_col, red_thr, amber_thr, sup_col, dur_col, date_col):
         loader = DataLoader()
         cleaner = DataCleaner()
         df = cleaner.clean(loader.load(str(path)))
-        return _build_risk_table(df, checks, int_col, red_thr, amber_thr, sup_col)
+        rows = _build_risk_table(df, checks, int_col, red_thr, amber_thr, sup_col, dur_col, date_col)
+        # Build productivity matrix: date × interviewer interview counts
+        prod_matrix: List[Dict[str, Any]] = []
+        if date_col and date_col in df.columns and int_col in df.columns:
+            work = df[[int_col, date_col]].copy()
+            work[date_col] = work[date_col].astype(str).str[:10]
+            pivot = (
+                work.groupby([date_col, int_col])
+                .size()
+                .unstack(fill_value=0)
+                .reset_index()
+            )
+            prod_matrix = json.loads(pivot.to_json(orient="records"))
+        return rows, prod_matrix
 
     try:
         loop = asyncio.get_running_loop()
-        rows = await loop.run_in_executor(
+        rows, prod_matrix = await loop.run_in_executor(
             None, _compute, file_path, checks, req.interviewer_column,
             req.red_threshold, req.amber_threshold, req.supervisor_column,
+            req.duration_column, req.date_column,
         )
         trends = _compute_date_trends(checks, req.date_column) if req.date_column else []
     except ValueError as exc:
@@ -160,4 +202,5 @@ async def interviewer_risk(req: RiskRequest):
         "rows": rows,
         "interviewer_column": req.interviewer_column,
         "date_trends": trends,
+        "productivity_matrix": prod_matrix,
     }

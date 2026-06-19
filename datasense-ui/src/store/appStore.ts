@@ -55,7 +55,9 @@ export interface ItvTabState {
   selectedInt: string
   supervisorCol: string
   dateCol: string
+  durationCol: string
   dateTrends: { date: string; flag_count: number }[]
+  productivityMatrix: Record<string, unknown>[]
 }
 
 interface AppState {
@@ -191,7 +193,7 @@ export const useAppStore = create<AppState>((set) => ({
 
   logicCheckSets: [{ id: 1, name: 'Check Set 1', rules: [{ id: 1, if_conditions: [{ id: 1, col: '', op: '==', val: '', connector: 'AND' as const }], then_cols: [], then_op: 'is_null', then_val: '', description: '' }], result: null, isRunning: false }],
   slTabState: { baseVar: [], qCols: [], threshold: 0.9, minQ: 3, result: null },
-  itvTabState: { intCol: '', redThr: 60, amberThr: 30, flagThr: 10, rows: [], intColName: '', selectedInt: '', supervisorCol: '', dateCol: '', dateTrends: [] },
+  itvTabState: { intCol: '', redThr: 60, amberThr: 30, flagThr: 10, rows: [], intColName: '', selectedInt: '', supervisorCol: '', dateCol: '', durationCol: '', dateTrends: [], productivityMatrix: [] },
   supplementalChecks: [],
   groqApiKey: localStorage.getItem('ds_groq_api_key') ?? '',
   authUser: (() => {

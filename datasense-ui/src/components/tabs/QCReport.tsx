@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { Download, ChevronDown, ChevronUp, Info, XCircle, Activity, Sparkles, FileText, Database, ChevronRight, Check } from 'lucide-react'
+import { Download, ChevronDown, ChevronUp, Info, XCircle, Activity, Sparkles, FileText, Database, ChevronRight, Check, Filter, Search } from 'lucide-react'
 import { useAppStore } from '../../store/appStore'
 import { downloadReport } from '../../api/qc'
 import { explainFlags, generateQCSummary } from '../../api/ai'
@@ -44,6 +44,7 @@ function CheckAccordion({
 
   const sev = check.severity
   const badgeClass = sev === 'critical' ? 'badge-critical' : sev === 'warning' ? 'badge-warning' : 'badge-info'
+  const rowHighlight = sev === 'critical' ? 'bg-critical/5 border-l-2 border-critical/30' : sev === 'warning' ? 'bg-warning/5 border-l-2 border-warning/20' : ''
 
   const explainMutation = useMutation({
     mutationFn: () =>
@@ -61,14 +62,22 @@ function CheckAccordion({
   })
 
   return (
-    <div className="card border-line">
+    <div className={`card border-line ${rowHighlight}`}>
       <button
         onClick={() => setOpen((o) => !o)}
         className="w-full flex items-center gap-3 px-4 py-3 text-left"
       >
         <span className={badgeClass}>{sev}</span>
         <span className="text-sm font-medium text-tx flex-1">{check.check_name.replace(/_/g, ' ')}</span>
-        <span className="text-xs text-muted mr-2">{check.flag_count} flags · {pct}%</span>
+        <div className="flex items-center gap-2 mr-2">
+          <div className="w-20 h-1.5 bg-surface2 rounded-full overflow-hidden">
+            <div
+              className={`h-full rounded-full ${sev === 'critical' ? 'bg-critical' : sev === 'warning' ? 'bg-warning' : 'bg-info'}`}
+              style={{ width: `${Math.min(parseFloat(pct), 100)}%` }}
+            />
+          </div>
+          <span className="text-xs text-muted whitespace-nowrap">{check.flag_count} flags · {pct}%</span>
+        </div>
         {open ? <ChevronUp size={14} className="text-muted" /> : <ChevronDown size={14} className="text-muted" />}
       </button>
 
@@ -107,7 +116,9 @@ function CheckAccordion({
               </thead>
               <tbody>
                 {rows.map((row, i) => (
-                  <tr key={i} className="border-b border-line/50 hover:bg-surface2 transition-colors">
+                  <tr key={i} className={`border-b border-line/50 hover:opacity-90 transition-colors ${
+                    sev === 'critical' ? 'bg-critical/5' : sev === 'warning' ? 'bg-warning/5' : 'bg-info/5'
+                  }`}>
                     {cols.map((c) => (
                       <td key={c} className="py-1.5 px-2 text-tx whitespace-nowrap">
                         {String(row[c] ?? '')}
@@ -336,6 +347,9 @@ export function QCReport() {
   const { results, jobId, jobStatus, jobError, rowCount, groqApiKey, config, supplementalChecks } = useAppStore()
   const [downloading, setDownloading] = useState(false)
   const [summary, setSummary] = useState('')
+  const [sevFilter, setSevFilter] = useState<'all' | 'critical' | 'warning' | 'info'>('all')
+  const [minFlags, setMinFlags] = useState(0)
+  const [checkSearch, setCheckSearch] = useState('')
 
   const summaryMutation = useMutation({
     mutationFn: () =>
@@ -393,6 +407,24 @@ export function QCReport() {
   const totalChecks = results.checks.length + supplementalChecks.length
   const totalFlags = results.total_flags + supplementalChecks.reduce((s, c) => s + c.flag_count, 0)
 
+  const applyFilters = (checks: typeof sorted) =>
+    checks.filter(c => {
+      if (sevFilter !== 'all' && c.severity !== sevFilter) return false
+      if (c.flag_count < minFlags) return false
+      if (checkSearch && !c.check_name.toLowerCase().includes(checkSearch.toLowerCase())) return false
+      return true
+    })
+
+  const filteredMain = applyFilters(sorted)
+  const filteredSupp = applyFilters(supplementalChecks)
+
+  const groupBySeverity = (checks: typeof sorted) => ({
+    critical: checks.filter(c => c.severity === 'critical' && c.flag_count > 0),
+    warning:  checks.filter(c => c.severity === 'warning'  && c.flag_count > 0),
+    info:     checks.filter(c => c.severity === 'info'     && c.flag_count > 0),
+    clean:    checks.filter(c => c.flag_count === 0),
+  })
+
   return (
     <div className="space-y-6 animate-fade-in">
       {/* Metric cards */}
@@ -443,32 +475,145 @@ export function QCReport() {
         </button>
       </div>
 
-      {/* Main pipeline checks */}
-      <div className="space-y-2">
-        <h3 className="text-xs font-semibold text-muted uppercase tracking-wide">Main QC Pipeline</h3>
-        {sorted.map((check) => (
-          <CheckAccordion
-            key={check.check_name}
-            check={check}
-            totalFlags={totalFlags}
-            totalRows={rowCount ?? 0}
-            groqApiKey={groqApiKey}
-            model={config.verbatim_check.model}
-          />
-        ))}
-        {results.total_flags === 0 && supplementalChecks.length === 0 && (
+      {/* ── Filter bar ───────────────────────────────────────────────────── */}
+      <div className="card p-3 space-y-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-1.5 text-xs text-muted shrink-0">
+            <Filter size={12} />
+            <span>Filter checks:</span>
+          </div>
+          <div className="flex gap-1">
+            {(['all', 'critical', 'warning', 'info'] as const).map(sev => (
+              <button
+                key={sev}
+                onClick={() => setSevFilter(sev)}
+                className={`text-[10px] px-2.5 py-1 rounded-full font-medium border transition-colors capitalize ${
+                  sevFilter === sev
+                    ? sev === 'critical' ? 'bg-critical/20 text-critical border-critical/40'
+                      : sev === 'warning' ? 'bg-warning/20 text-warning border-warning/40'
+                      : sev === 'info' ? 'bg-info/20 text-info border-info/40'
+                      : 'bg-surface2 text-tx border-line'
+                    : 'text-muted border-line/50 hover:text-tx'
+                }`}
+              >
+                {sev}
+              </button>
+            ))}
+          </div>
+          <div className="flex items-center gap-1.5 text-xs text-muted">
+            <span>Min flags:</span>
+            <input
+              type="number"
+              min={0}
+              value={minFlags}
+              onChange={e => setMinFlags(Math.max(0, +e.target.value))}
+              className="w-16 py-0.5 px-2 text-xs"
+            />
+          </div>
+          <div className="relative flex-1 min-w-32">
+            <Search size={11} className="absolute left-2 top-1/2 -translate-y-1/2 text-muted" />
+            <input
+              type="text"
+              placeholder="Search check name…"
+              value={checkSearch}
+              onChange={e => setCheckSearch(e.target.value)}
+              className="w-full pl-6 py-0.5 text-xs"
+            />
+          </div>
+          {(sevFilter !== 'all' || minFlags > 0 || checkSearch) && (
+            <button
+              onClick={() => { setSevFilter('all'); setMinFlags(0); setCheckSearch('') }}
+              className="text-[10px] text-muted hover:text-tx"
+            >
+              Clear filters
+            </button>
+          )}
+        </div>
+        {(sevFilter !== 'all' || minFlags > 0 || checkSearch) && (
+          <p className="text-[10px] text-muted">
+            Showing {filteredMain.length + filteredSupp.length} of {totalChecks} checks
+          </p>
+        )}
+      </div>
+
+      {/* Main pipeline checks — grouped by severity */}
+      <div className="space-y-4">
+        {results.total_flags === 0 && supplementalChecks.length === 0 ? (
           <div className="flex items-center gap-2 text-accent text-sm justify-center py-8">
             <Info size={16} />
             No issues found — your data looks clean!
           </div>
+        ) : (
+          <>
+            {/* Critical */}
+            {groupBySeverity(filteredMain).critical.length > 0 && (
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <div className="h-3 w-1 rounded bg-critical" />
+                  <h3 className="text-xs font-semibold text-critical uppercase tracking-wide">
+                    Critical Issues — {groupBySeverity(filteredMain).critical.length} check{groupBySeverity(filteredMain).critical.length !== 1 ? 's' : ''}
+                  </h3>
+                </div>
+                {groupBySeverity(filteredMain).critical.map((check) => (
+                  <CheckAccordion key={check.check_name} check={check} totalFlags={totalFlags}
+                    totalRows={rowCount ?? 0} groqApiKey={groqApiKey} model={config.verbatim_check.model} />
+                ))}
+              </div>
+            )}
+            {/* Warning */}
+            {groupBySeverity(filteredMain).warning.length > 0 && (
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <div className="h-3 w-1 rounded bg-warning" />
+                  <h3 className="text-xs font-semibold text-warning uppercase tracking-wide">
+                    Warnings — {groupBySeverity(filteredMain).warning.length} check{groupBySeverity(filteredMain).warning.length !== 1 ? 's' : ''}
+                  </h3>
+                </div>
+                {groupBySeverity(filteredMain).warning.map((check) => (
+                  <CheckAccordion key={check.check_name} check={check} totalFlags={totalFlags}
+                    totalRows={rowCount ?? 0} groqApiKey={groqApiKey} model={config.verbatim_check.model} />
+                ))}
+              </div>
+            )}
+            {/* Info */}
+            {groupBySeverity(filteredMain).info.length > 0 && (
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <div className="h-3 w-1 rounded bg-info" />
+                  <h3 className="text-xs font-semibold text-info uppercase tracking-wide">
+                    Info — {groupBySeverity(filteredMain).info.length} check{groupBySeverity(filteredMain).info.length !== 1 ? 's' : ''}
+                  </h3>
+                </div>
+                {groupBySeverity(filteredMain).info.map((check) => (
+                  <CheckAccordion key={check.check_name} check={check} totalFlags={totalFlags}
+                    totalRows={rowCount ?? 0} groqApiKey={groqApiKey} model={config.verbatim_check.model} />
+                ))}
+              </div>
+            )}
+            {/* Clean checks (no flags) — collapsed by default */}
+            {groupBySeverity(filteredMain).clean.length > 0 && (sevFilter === 'all' && !checkSearch) && (
+              <details className="group">
+                <summary className="text-xs text-muted cursor-pointer hover:text-tx flex items-center gap-1.5 list-none py-1">
+                  <ChevronRight size={12} className="group-open:rotate-90 transition-transform" />
+                  {groupBySeverity(filteredMain).clean.length} checks passed (no flags)
+                </summary>
+                <div className="space-y-2 mt-2">
+                  {groupBySeverity(filteredMain).clean.map((check) => (
+                    <CheckAccordion key={check.check_name} check={check} totalFlags={totalFlags}
+                      totalRows={rowCount ?? 0} groqApiKey={groqApiKey} model={config.verbatim_check.model} />
+                  ))}
+                </div>
+              </details>
+            )}
+          </>
         )}
       </div>
 
       {/* Supplemental checks from tabs */}
-      {supplementalChecks.length > 0 && (
+      {filteredSupp.length > 0 && (
         <div className="space-y-2">
           <h3 className="text-xs font-semibold text-muted uppercase tracking-wide">Ad-hoc Checks (from tabs)</h3>
-          {supplementalChecks.map((check) => (
+          {filteredSupp.map((check) => (
             <CheckAccordion
               key={check.check_name}
               check={check}

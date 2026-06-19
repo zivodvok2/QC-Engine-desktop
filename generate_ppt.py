@@ -898,6 +898,144 @@ def slide_config_profiles(prs):
     add_text(s, snippet, 7.25, 1.68, 5.4, 5.1, size=9, color=ACCENT)
 
 
+def slide_dashboard_overview(prs):
+    s = blank_slide(prs)
+    fill_bg(s)
+    slide_header(s, "Manager Dashboard", "Streamlit subdomain app — dashboard.servallab.com  ·  separate from QC engine")
+
+    card(s, 0.5, 1.15, 5.9, 5.85, SURFACE)
+    add_rect(s, 0.5, 1.15, 5.9, 0.06, ACCENT2)
+    add_text(s, "What It Is", 0.7, 1.28, 5.5, 0.42, size=14, bold=True, color=WHITE)
+
+    r = [
+        ("Purpose",
+         "A multi-project operations dashboard for QC managers and supervisors to track survey health "
+         "across all active studies — not a replacement for the QC engine."),
+        ("Stack",
+         "Streamlit Python app. Deployed on Fly.io (dashboard.servallab.com). "
+         "SQLite database via SQLAlchemy — persists project, interviewer, and QC history records."),
+        ("Auth",
+         "JWT-based login. Roles: admin, manager, viewer. "
+         "Admin creates users; managers own projects; viewers can read but not write."),
+        ("Relation to QC engine",
+         "QC results saved from the React engine can be pushed here via 'Save to project'. "
+         "The dashboard tracks trends over multiple waves, not individual file runs."),
+        ("Default credentials",
+         "First-run: admin@servallab.com / admin1234. Change immediately in production."),
+    ]
+    y = 1.75
+    for label, val in r:
+        add_text(s, label, 0.7, y, 2.0, 0.35, size=10, bold=True, color=ACCENT2)
+        add_text(s, val,   2.75, y, 3.55, 0.78, size=10, color=MUTED)
+        y += 0.9
+
+    card(s, 6.8, 1.15, 5.9, 5.85, SURFACE)
+    add_rect(s, 6.8, 1.15, 5.9, 0.06, ACCENT2)
+    add_text(s, "Dashboard Pages", 7.0, 1.28, 5.5, 0.42, size=14, bold=True, color=WHITE)
+
+    pages = [
+        ("Project Overview",   "KPIs, wave history, open issues per project"),
+        ("Quality Report",     "Flag rate trends by check type across waves"),
+        ("Performance Report", "Interviewer-level flag rates and risk scores over time"),
+        ("Backcheck Report",   "Backcheck completion rate and error tracking"),
+        ("Listen-In Report",   "Listen-in session pass/fail tracking per supervisor"),
+        ("Wave Comparison",    "Statistical shifts between survey waves"),
+        ("Cancelled Interviews","Cancellations logged by reason and interviewer"),
+        ("Admin",              "User management, project creation, role assignment"),
+    ]
+    y = 1.75
+    for page, desc in pages:
+        add_rect(s, 6.9, y, 5.6, 0.62, DARKISH)
+        add_text(s, page, 7.05, y + 0.06, 2.2, 0.32, size=10, bold=True, color=WHITE)
+        add_text(s, desc,  9.3, y + 0.06, 3.05, 0.5, size=9, color=MUTED)
+        y += 0.7
+
+
+def slide_dashboard_db(prs):
+    s = blank_slide(prs)
+    fill_bg(s)
+    slide_header(s, "Dashboard — Data Model", "SQLite (SQLAlchemy ORM)  ·  dashboard/database.py")
+
+    tables = [
+        ("User", ACCENT2,
+         ["id, email, hashed_password", "role: admin / manager / viewer",
+          "created_at, is_active"]),
+        ("Project", ACCENT,
+         ["id, name, status (active/closed)", "manager_id → User",
+          "created_at, wave_count"]),
+        ("UploadLog", WARNING,
+         ["id, project_id → Project", "file_id, filename, wave_label",
+          "total_records, flag_count", "uploaded_at"]),
+        ("Interviewer", ACCENT2,
+         ["id, interviewer_code (unique)", "name, supervisor_name",
+          "created_at, is_active"]),
+        ("InterviewerQuality", CRITICAL,
+         ["interviewer_id → Interviewer", "project_id → Project",
+          "total_interviews, duration_flags", "sl_flags, total_flags"]),
+        ("BackcheckRecord", INFO_COL,
+         ["interviewer_id → Interviewer", "project_id, bc_date",
+          "total_errors, outcome"]),
+        ("ListenInRecord", RGBColor(0xA0, 0x78, 0xF0),
+         ["interviewer_id → Interviewer", "project_id, li_date",
+          "pass_fail, supervisor_id → User"]),
+        ("CancelledInterview", MUTED,
+         ["interviewer_id → Interviewer", "project_id, cancel_date",
+          "reason_code, notes"]),
+    ]
+
+    cols = 4
+    for i, (name, color, fields) in enumerate(tables):
+        col, row = i % cols, i // cols
+        x = 0.4 + col * 3.22
+        y = 1.15 + row * 3.05
+        card(s, x, y, 3.0, 2.88, SURFACE)
+        add_rect(s, x, y, 3.0, 0.05, color)
+        add_text(s, name, x + 0.12, y + 0.1, 2.75, 0.38, size=11, bold=True, color=WHITE)
+        for j, f in enumerate(fields):
+            add_text(s, "· " + f, x + 0.12, y + 0.58 + j * 0.68, 2.75, 0.62, size=9, color=MUTED)
+
+
+def slide_dashboard_auth(prs):
+    s = blank_slide(prs)
+    fill_bg(s)
+    slide_header(s, "Dashboard Auth + Deployment", "JWT auth  ·  Fly.io deployment  ·  shared_db.py bridge")
+
+    card(s, 0.5, 1.15, 5.9, 5.85, SURFACE)
+    add_rect(s, 0.5, 1.15, 5.9, 0.06, ACCENT)
+    add_text(s, "Authentication Flow", 0.7, 1.28, 5.5, 0.42, size=14, bold=True, color=WHITE)
+
+    auth_steps = [
+        ("Login",        "POST /api/auth/login → returns JWT access token (24h TTL)"),
+        ("Token storage", "React: localStorage key ds_auth_token. Sent as Bearer header on every API call."),
+        ("Role check",   "FastAPI dependency get_current_user() decodes JWT, checks role against endpoint requirements."),
+        ("Dashboard",    "Streamlit sessions use HTTP-only cookie. Same SQLite DB, separate session state."),
+        ("shared_db.py", "Bridge module that both the FastAPI backend and Streamlit dashboard import — "
+                          "ensures they write to the same SQLite file regardless of working directory."),
+    ]
+    y = 1.75
+    for label, val in auth_steps:
+        add_text(s, label, 0.7, y, 2.0, 0.35, size=10, bold=True, color=ACCENT)
+        add_text(s, val,   2.75, y, 3.55, 0.75, size=10, color=MUTED)
+        y += 0.9
+
+    card(s, 6.8, 1.15, 5.9, 5.85, SURFACE)
+    add_rect(s, 6.8, 1.15, 5.9, 0.06, ACCENT2)
+    add_text(s, "Deployment", 7.0, 1.28, 5.5, 0.42, size=14, bold=True, color=WHITE)
+
+    deploy = [
+        ("QC Engine",      "Render.com — servalab.render.com\nFastAPI backend, React static bundle via Vite build"),
+        ("Dashboard",      "Fly.io — dashboard.servallab.com\ndashboard/fly.toml configures app name, region, machine size"),
+        ("Database",       "SQLite persisted on Fly.io volume mount.\nNot shared across instances — single-region deployment."),
+        ("CI/CD",          "Manual deploy: fly deploy (dashboard) and Render auto-deploy on push to main."),
+        ("Env vars",       "VITE_API_URL → FastAPI URL\nSECRET_KEY → JWT signing key\nGROQ_API_KEY → AI verbatim check"),
+    ]
+    y = 1.75
+    for label, val in deploy:
+        add_text(s, label, 7.0, y, 2.0, 0.35, size=10, bold=True, color=ACCENT2)
+        add_text(s, val,   9.05, y, 3.5, 0.75, size=10, color=MUTED)
+        y += 0.9
+
+
 def slide_closing(prs):
     s = blank_slide(prs)
     fill_bg(s)
@@ -912,6 +1050,7 @@ def slide_closing(prs):
         "IQR-based statistical outlier detection",
         "Groq LLM for open-ended verbatim quality scoring",
         "Portable JSON config profiles for project reuse",
+        "Manager dashboard — multi-project tracking at dashboard.servallab.com",
     ]):
         add_text(s, "▸  " + line, 2.5, 3.62 + i * 0.52, 8.33, 0.42, size=13, color=MUTED, align=PP_ALIGN.CENTER)
     add_text(s, "github.com/zivodvok2/QC-Engine-desktop", 0.6, 6.6, 12, 0.4, size=11, color=MUTED, align=PP_ALIGN.CENTER)
@@ -940,6 +1079,9 @@ def build():
     slide_verbatim(prs)
     slide_verbatim_scoring(prs)
     slide_config_profiles(prs)
+    slide_dashboard_overview(prs)
+    slide_dashboard_db(prs)
+    slide_dashboard_auth(prs)
     slide_closing(prs)
     out = "Servallab_QC_Technical.pptx"
     prs.save(out)
