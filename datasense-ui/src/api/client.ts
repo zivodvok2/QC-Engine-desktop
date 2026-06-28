@@ -12,6 +12,14 @@ export const client = axios.create({
 client.interceptors.response.use(
   (res) => res,
   (err) => {
+    if (err.response?.status === 401) {
+      // Lazy-import the store to avoid circular deps
+      import('../store/appStore').then(({ useAppStore }) => {
+        const { logoutUser, openLogin } = useAppStore.getState()
+        logoutUser()
+        openLogin()
+      })
+    }
     const detail = err.response?.data?.detail
     const message =
       typeof detail === 'string'

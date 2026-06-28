@@ -1,11 +1,13 @@
 import React, { useEffect, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { Download, ChevronDown, ChevronUp, Info, XCircle, Activity, Sparkles, FileText, Database, ChevronRight, Check, Filter, Search } from 'lucide-react'
+import { Download, ChevronDown, ChevronUp, Info, XCircle, Activity, Sparkles, FileText, Database, ChevronRight, Check, Filter, Search, Users, Loader2 } from 'lucide-react'
 import { useAppStore } from '../../store/appStore'
 import { downloadReport } from '../../api/qc'
 import { explainFlags, generateQCSummary } from '../../api/ai'
 import { getProjects, createProject, saveQCResults } from '../../api/projects'
-import { getUploadLog } from '../../api/dashboard'
+import { getUploadLog, uploadBackcheck, uploadListenIn, uploadPerformance, uploadCancelled } from '../../api/dashboard'
+import { computeRisk } from '../../api/interviewers'
+import type { RiskRow } from '../../api/interviewers'
 import type { CheckResult } from '../../types'
 import type { Project } from '../../api/projects'
 
@@ -146,8 +148,318 @@ function CheckAccordion({
   )
 }
 
+function InterviewerRiskPanel() {
+  const { results, jobId, fileId, jobStatus, config, itvTabState, setItvTabState } = useAppStore()
+  const [open, setOpen] = useState(true)
+  const [promptCol, setPromptCol] = useState('')
+
+  const interviewerCol = (
+    [
+      itvTabState.intCol,
+      config.interviewer_duration_check.enabled ? config.interviewer_duration_check.interviewer_column : '',
+      config.fabrication_check.enabled ? (config.fabrication_check.interviewer_column ?? '') : '',
+      config.interviewer_productivity_check.enabled ? config.interviewer_productivity_check.interviewer_column : '',
+      config.straightlining.enabled ? (config.straightlining.interviewer_column ?? '') : '',
+    ].find((c) => !!c) ?? ''
+  )
+
+  const durCol =
+    (config.interviewer_duration_check.enabled && config.interviewer_duration_check.duration_column) ||
+    (config.interview_duration.enabled && config.interview_duration.column) ||
+    undefined
+
+  const dateCol =
+    (config.interviewer_productivity_check.enabled && config.interviewer_productivity_check.date_column) ||
+    undefined
+
+  const hasItvRows = itvTabState.rows.length > 0
+
+  const riskQuery = useQuery({
+    queryKey: ['qr-risk', jobId, interviewerCol],
+    queryFn: () =>
+      computeRisk(
+        fileId!,
+        jobId!,
+        interviewerCol,
+        itvTabState.redThr || 60,
+        itvTabState.amberThr || 30,
+        itvTabState.supervisorCol || undefined,
+        dateCol || undefined,
+        durCol || undefined,
+      ),
+    enabled: !!jobId && !!fileId && !!interviewerCol && jobStatus === 'complete' && !hasItvRows,
+    retry: false,
+    staleTime: Infinity,
+  })
+
+  const rows: RiskRow[] = hasItvRows
+    ? (itvTabState.rows as RiskRow[])
+    : (riskQuery.data?.rows ?? [])
+  const colName = hasItvRows
+    ? (itvTabState.intColName || itvTabState.intCol)
+    : (riskQuery.data?.interviewer_column ?? interviewerCol)
+
+  if (!results) return null
+
+  if (!interviewerCol && !hasItvRows) {
+    return (
+      <div className="card border-line px-4 py-3 flex flex-wrap items-center gap-3">
+        <Users size={14} className="text-muted shrink-0" />
+        <span className="text-xs text-muted flex-1 min-w-0">
+          Enter the interviewer column name to auto-compute risk scores inline
+        </span>
+        <input
+          type="text"
+          value={promptCol}
+          onChange={e => setPromptCol(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter' && promptCol.trim()) setItvTabState({ intCol: promptCol.trim() }) }}
+          placeholder="e.g. interviewer_id"
+          className="w-36 text-xs"
+        />
+        <button
+          onClick={() => { if (promptCol.trim()) setItvTabState({ intCol: promptCol.trim() }) }}
+          disabled={!promptCol.trim()}
+          className="btn-ghost text-xs shrink-0"
+        >
+          Analyze →
+        </button>
+      </div>
+    )
+  }
+
+  if (riskQuery.isError && !hasItvRows) return null
+
+  const high = rows.filter((r) => r.risk_level === 'HIGH').length
+  const medium = rows.filter((r) => r.risk_level === 'MEDIUM').length
+  const low = rows.filter((r) => r.risk_level === 'LOW').length
+  const top = rows.slice(0, 10)
+  const isLoading = riskQuery.isPending && !hasItvRows
+  const showDur = top.some((r) => r.avg_duration != null)
+  const showSup = top.some((r) => r.supervisor && r.supervisor !== 'None' && r.supervisor !== 'null')
+
+  return (
+    <div className="card border-line">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-surface2 transition-colors"
+      >
+        <Users size={14} className="text-accent" />
+        <span className="text-sm font-medium text-tx flex-1">Interviewer Risk Summary</span>
+        {isLoading && <Loader2 size={12} className="text-muted animate-spin" />}
+        {!isLoading && rows.length > 0 && (
+          <div className="flex items-center gap-2 mr-2">
+            {high > 0 && (
+              <span className="text-[10px] px-2 py-0.5 rounded-full bg-critical/10 text-critical border border-critical/30">
+                {high} HIGH
+              </span>
+            )}
+            {medium > 0 && (
+              <span className="text-[10px] px-2 py-0.5 rounded-full bg-warning/10 text-warning border border-warning/30">
+                {medium} MED
+              </span>
+            )}
+            {low > 0 && (
+              <span className="text-[10px] px-2 py-0.5 rounded-full bg-accent/10 text-accent border border-accent/30">
+                {low} LOW
+              </span>
+            )}
+          </div>
+        )}
+        {open ? <ChevronUp size={14} className="text-muted" /> : <ChevronDown size={14} className="text-muted" />}
+      </button>
+
+      {open && (
+        <div className="border-t border-line px-4 pb-4 pt-3">
+          {isLoading && (
+            <div className="flex items-center justify-center gap-2 py-6 text-xs text-muted">
+              <Loader2 size={12} className="animate-spin" />
+              Computing interviewer risk…
+            </div>
+          )}
+          {!isLoading && rows.length === 0 && (
+            <p className="text-xs text-muted py-2">
+              {interviewerCol
+                ? `No data found in column "${interviewerCol}". Run interviewer checks to populate this panel.`
+                : 'Enable an interviewer check (duration, fabrication, or productivity) and set the interviewer column to auto-populate this panel.'}
+            </p>
+          )}
+          {!isLoading && top.length > 0 && (
+            <>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b border-line">
+                      <th className="text-left py-1.5 px-2 text-muted font-normal whitespace-nowrap">
+                        {colName || 'Interviewer'}
+                      </th>
+                      {showSup && (
+                        <th className="text-left py-1.5 px-2 text-muted font-normal whitespace-nowrap">Supervisor</th>
+                      )}
+                      <th className="text-center py-1.5 px-2 text-muted font-normal">Risk</th>
+                      <th className="text-center py-1.5 px-2 text-muted font-normal">Score</th>
+                      <th className="text-center py-1.5 px-2 text-muted font-normal">Interviews</th>
+                      <th className="text-center py-1.5 px-2 text-muted font-normal">Flags</th>
+                      <th className="text-center py-1.5 px-2 text-muted font-normal">Flag %</th>
+                      <th className="text-center py-1.5 px-2 text-muted font-normal whitespace-nowrap">Fabrication</th>
+                      <th className="text-center py-1.5 px-2 text-muted font-normal whitespace-nowrap">Duration</th>
+                      <th className="text-center py-1.5 px-2 text-muted font-normal whitespace-nowrap">S-lining</th>
+                      {showDur && (
+                        <th className="text-center py-1.5 px-2 text-muted font-normal whitespace-nowrap">
+                          Avg Dur (min)
+                        </th>
+                      )}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {top.map((r, i) => {
+                      const id = String(r[colName] ?? r[interviewerCol] ?? i)
+                      const lvl = r.risk_level
+                      const badgeCls =
+                        lvl === 'HIGH'
+                          ? 'bg-critical/10 text-critical border-critical/30'
+                          : lvl === 'MEDIUM'
+                          ? 'bg-warning/10 text-warning border-warning/30'
+                          : 'bg-accent/10 text-accent border-accent/30'
+                      const rowCls =
+                        lvl === 'HIGH' ? 'bg-critical/5' : lvl === 'MEDIUM' ? 'bg-warning/5' : ''
+                      const rateColor =
+                        lvl === 'HIGH' ? 'text-critical' : lvl === 'MEDIUM' ? 'text-warning' : 'text-accent'
+                      return (
+                        <tr
+                          key={id}
+                          className={`border-b border-line/50 hover:opacity-90 transition-opacity ${rowCls}`}
+                        >
+                          <td className="py-1.5 px-2 text-tx font-medium whitespace-nowrap">{id}</td>
+                          {showSup && (
+                            <td className="py-1.5 px-2 text-muted whitespace-nowrap">
+                              {r.supervisor && r.supervisor !== 'None' ? r.supervisor : '—'}
+                            </td>
+                          )}
+                          <td className="py-1.5 px-2 text-center">
+                            <span className={`text-[10px] px-1.5 py-0.5 rounded-full border ${badgeCls}`}>
+                              {lvl}
+                            </span>
+                          </td>
+                          <td className={`py-1.5 px-2 text-center font-bold ${rateColor}`}>{r.risk_score}</td>
+                          <td className="py-1.5 px-2 text-center text-muted">{r.total_interviews}</td>
+                          <td className="py-1.5 px-2 text-center text-tx">{r.total_flags}</td>
+                          <td className={`py-1.5 px-2 text-center font-medium ${rateColor}`}>
+                            {r.flag_rate_pct}%
+                          </td>
+                          <td className="py-1.5 px-2 text-center text-muted">{r.fabrication_flags || 0}</td>
+                          <td className="py-1.5 px-2 text-center text-muted">{r.duration_flags || 0}</td>
+                          <td className="py-1.5 px-2 text-center text-muted">{r.straightlining_flags || 0}</td>
+                          {showDur && (
+                            <td className="py-1.5 px-2 text-center text-muted">
+                              {r.avg_duration != null ? r.avg_duration : '—'}
+                            </td>
+                          )}
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              {rows.length > 10 && (
+                <p className="text-[10px] text-muted mt-2 px-1">
+                  Showing top 10 of {rows.length} interviewers by risk score. Full breakdown in the{' '}
+                  <span className="text-accent">Interviewers</span> tab.
+                </p>
+              )}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+type UploadStatus = 'idle' | 'uploading' | 'done' | 'error'
+
+const SUPPORT_FILES = [
+  { key: 'backcheck',    label: 'Backcheck',    accept: '.xlsx,.csv', hint: 'Interviewer error records' },
+  { key: 'listen_in',   label: 'Listen-in',    accept: '.xlsx,.csv', hint: 'Audio monitoring log' },
+  { key: 'performance', label: 'Performance',  accept: '.xlsx,.csv', hint: 'Productivity per interviewer' },
+  { key: 'cancelled',   label: 'Cancelled',    accept: '.xlsx,.csv', hint: 'Rejected/cancelled interviews' },
+] as const
+type SupportKey = typeof SUPPORT_FILES[number]['key']
+
+function SupportingFilesSection({ projectId, waveLabel, token }: { projectId: number; waveLabel: string; token: string }) {
+  const [files, setFiles] = useState<Partial<Record<SupportKey, File>>>({})
+  const [statuses, setStatuses] = useState<Partial<Record<SupportKey, UploadStatus>>>({})
+  const [errors, setErrors] = useState<Partial<Record<SupportKey, string>>>({})
+
+  const setStatus = (key: SupportKey, s: UploadStatus) => setStatuses(p => ({ ...p, [key]: s }))
+  const setErr = (key: SupportKey, e: string) => setErrors(p => ({ ...p, [key]: e }))
+
+  const upload = async (key: SupportKey) => {
+    const file = files[key]
+    if (!file) return
+    setStatus(key, 'uploading')
+    setErr(key, '')
+    try {
+      const wl = waveLabel.trim() || undefined
+      if (key === 'backcheck')    await uploadBackcheck(projectId, file, token, wl)
+      if (key === 'listen_in')    await uploadListenIn(projectId, file, token, wl)
+      if (key === 'performance')  await uploadPerformance(projectId, file, token, wl)
+      if (key === 'cancelled')    await uploadCancelled(projectId, file, token, wl)
+      setStatus(key, 'done')
+    } catch (e) {
+      setStatus(key, 'error')
+      setErr(key, (e as Error).message)
+    }
+  }
+
+  return (
+    <div className="mt-3 pt-3 border-t border-line space-y-2">
+      <p className="text-xs text-muted font-medium uppercase tracking-wider">Upload supporting files (optional)</p>
+      {SUPPORT_FILES.map(({ key, label, accept, hint }) => {
+        const status = statuses[key] ?? 'idle'
+        const file = files[key]
+        return (
+          <div key={key} className="flex items-center gap-2 py-1">
+            <div className="w-24 shrink-0">
+              <p className="text-xs text-tx font-medium">{label}</p>
+              <p className="text-[10px] text-muted">{hint}</p>
+            </div>
+            <label className="flex-1 cursor-pointer">
+              <span className={`text-xs px-2 py-1 rounded border transition-colors block truncate ${
+                file ? 'border-accent/40 text-accent bg-accent/5' : 'border-line text-muted hover:border-muted'
+              }`}>
+                {file ? file.name : 'Choose file…'}
+              </span>
+              <input
+                type="file"
+                accept={accept}
+                className="hidden"
+                onChange={e => {
+                  const f = e.target.files?.[0]
+                  if (f) { setFiles(p => ({ ...p, [key]: f })); setStatus(key, 'idle') }
+                }}
+              />
+            </label>
+            <button
+              onClick={() => upload(key)}
+              disabled={!file || status === 'uploading' || status === 'done'}
+              className={`text-xs px-3 py-1 rounded border shrink-0 transition-colors ${
+                status === 'done' ? 'border-accent/40 text-accent bg-accent/10 cursor-default' :
+                status === 'error' ? 'border-critical/40 text-critical hover:bg-critical/10' :
+                !file ? 'border-line text-muted cursor-not-allowed opacity-50' :
+                'border-accent text-accent hover:bg-accent/10'
+              }`}
+            >
+              {status === 'uploading' ? '…' : status === 'done' ? '✓ Saved' : 'Upload'}
+            </button>
+            {errors[key] && <p className="text-[10px] text-critical ml-1">{errors[key]}</p>}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 function SaveToProject() {
-  const { authUser, authToken, fileId, filename, openLogin, setDashboardMode, setDashboardProject } = useAppStore()
+  const { authUser, authToken, fileId, jobId, filename, openLogin, setDashboardMode, setDashboardProject } = useAppStore()
   const [expanded, setExpanded] = useState(false)
   const [mode, setMode] = useState<'pick' | 'new'>('pick')
   const [selectedId, setSelectedId] = useState<number | ''>('')
@@ -179,7 +491,7 @@ function SaveToProject() {
         projectId = Number(selectedId)
       }
 
-      const result = await saveQCResults(projectId, fileId, filename, authToken, waveLabel.trim() || undefined)
+      const result = await saveQCResults(projectId, fileId, filename, authToken, waveLabel.trim() || undefined, jobId ?? undefined)
       setSavedProjectId(projectId)
       return result
     },
@@ -230,18 +542,27 @@ function SaveToProject() {
 
   if (saved) {
     return (
-      <div className="card p-4 flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2 text-accent text-sm">
-          <Check size={14} />
-          Results saved to project.
+      <div className="card p-4 space-y-0">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2 text-accent text-sm">
+            <Check size={14} />
+            Results saved to project.
+          </div>
+          {savedProjectId !== null && (
+            <button
+              onClick={() => { setDashboardMode(true); setDashboardProject(savedProjectId) }}
+              className="btn-ghost text-xs flex items-center gap-1.5"
+            >
+              <Database size={12} /> View in Dashboard
+            </button>
+          )}
         </div>
-        {savedProjectId !== null && (
-          <button
-            onClick={() => { setDashboardMode(true); setDashboardProject(savedProjectId) }}
-            className="btn-ghost text-xs flex items-center gap-1.5"
-          >
-            <Database size={12} /> View in Dashboard
-          </button>
+        {savedProjectId !== null && authToken && (
+          <SupportingFilesSection
+            projectId={savedProjectId}
+            waveLabel={waveLabel}
+            token={authToken}
+          />
         )}
       </div>
     )
@@ -435,6 +756,9 @@ export function QCReport() {
         <MetricCard label="Warnings" value={results.flagged_by_severity.warning ?? 0} color="text-warning" />
         <MetricCard label="Info" value={results.flagged_by_severity.info ?? 0} color="text-info" />
       </div>
+
+      {/* Interviewer risk — auto-computed when interviewer column is configured */}
+      <InterviewerRiskPanel />
 
       {/* AI Summary */}
       {groqApiKey && (

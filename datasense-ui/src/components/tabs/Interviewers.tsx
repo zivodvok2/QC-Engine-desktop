@@ -13,7 +13,7 @@ import { computeRisk, type RiskRow } from '../../api/interviewers'
 import { generateFeedbackLetter } from '../../api/ai'
 import { addSupplemental } from '../../api/qc'
 import { InterviewerProfile } from './InterviewerProfile'
-import { getInterviewerMetrics, upsertInterviewer, type InterviewerMetrics } from '../../api/dashboard'
+import { getInterviewerMetrics, upsertInterviewer, bulkUpsertSupervisors, type InterviewerMetrics } from '../../api/dashboard'
 
 const TOOLTIP_STYLE = {
   contentStyle: { background: '#111318', border: '1px solid #1f2330', borderRadius: 6 },
@@ -271,6 +271,30 @@ export function Interviewers() {
           Promise.allSettled(
             unregistered.map(code => upsertInterviewer({ interviewer_code: code }, authToken))
           ).catch(() => { /* non-blocking */ })
+        }
+
+        // Auto-register supervisors from this file and link them to interviewers
+        if (supervisorCol) {
+          const uniqueSupNames = [...new Set(
+            (data.rows as RiskRow[])
+              .map(r => r.supervisor)
+              .filter((s): s is string => !!s && s !== 'None' && s !== 'null' && s !== 'nan')
+          )]
+          if (uniqueSupNames.length > 0) {
+            bulkUpsertSupervisors(uniqueSupNames, authToken).then(nameToId => {
+              Promise.allSettled(
+                (data.rows as RiskRow[]).map(row => {
+                  const code = String(row[data.interviewer_column] ?? '')
+                  const supName = row.supervisor && row.supervisor !== 'None' && row.supervisor !== 'null'
+                    ? String(row.supervisor) : null
+                  const supId = supName ? (nameToId[supName] ?? null) : null
+                  if (code && supId) {
+                    return upsertInterviewer({ interviewer_code: code, supervisor_id: supId }, authToken)
+                  }
+                }).filter(Boolean) as Promise<unknown>[]
+              )
+            }).catch(() => { /* non-blocking */ })
+          }
         }
       }
     },

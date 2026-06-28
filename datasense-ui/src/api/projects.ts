@@ -41,10 +41,11 @@ export async function saveQCResults(
   filename: string,
   token: string,
   waveLabel?: string,
+  jobId?: string,
 ): Promise<SaveQCResult> {
   const { data } = await client.post<SaveQCResult>(
     `/api/projects/${projectId}/qc-results`,
-    { file_id: fileId, filename, wave_label: waveLabel || null },
+    { file_id: fileId, filename, wave_label: waveLabel || null, job_id: jobId || null },
     { headers: authHeader(token) },
   )
   return data

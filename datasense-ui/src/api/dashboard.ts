@@ -402,6 +402,13 @@ export async function upsertInterviewer(
   return data
 }
 
+export async function bulkUpsertSupervisors(names: string[], token: string): Promise<Record<string, number>> {
+  const { data } = await client.post<Record<string, number>>('/api/dashboard/supervisors/bulk-upsert', { names }, {
+    headers: authHeader(token),
+  })
+  return data
+}
+
 export async function getInterviewerMetrics(code: string, token: string): Promise<InterviewerMetrics> {
   const { data } = await client.get<InterviewerMetrics>(`/api/dashboard/interviewers/${encodeURIComponent(code)}/metrics`, {
     headers: authHeader(token),

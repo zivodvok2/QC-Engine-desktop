@@ -1,6 +1,6 @@
 import React from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { ArrowLeft, LayoutDashboard, Loader2, Users } from 'lucide-react'
+import { ArrowLeft, LayoutDashboard, Loader2, LogIn, Users } from 'lucide-react'
 import { useAppStore } from '../../store/appStore'
 
 const IS_DASHBOARD_DOMAIN = typeof window !== 'undefined' && (
@@ -16,7 +16,7 @@ export function Dashboard() {
   const {
     authToken, authUser,
     dashboardProjectId, dashboardView,
-    setDashboardMode, setDashboardProject, setDashboardView,
+    setDashboardMode, setDashboardProject, setDashboardView, openLogin,
   } = useAppStore()
   const token = authToken ?? ''
 
@@ -73,7 +73,14 @@ export function Dashboard() {
 
         {/* Project list */}
         <div className="flex-1 overflow-y-auto">
-          {isLoading ? (
+          {!token ? (
+            <button
+              onClick={openLogin}
+              className="w-full flex items-center gap-2 px-4 py-3 text-xs text-muted hover:text-accent transition-colors"
+            >
+              <LogIn size={12} /> Sign in to view projects
+            </button>
+          ) : isLoading ? (
             <div className="flex items-center gap-2 px-4 py-3 text-muted text-xs">
               <Loader2 size={12} className="animate-spin" /> Loading…
             </div>

@@ -744,6 +744,27 @@ def delete_supervisor(supervisor_id: int):
     conn.close()
 
 
+def upsert_supervisors_bulk(names: list) -> dict:
+    """Find-or-create supervisors by name. Returns {name: id} mapping."""
+    if not db_available() or not names:
+        return {}
+    conn = get_conn()
+    result: dict = {}
+    for raw in names:
+        name = str(raw).strip()
+        if not name or name.lower() in ("none", "null", "nan", ""):
+            continue
+        existing = conn.execute("SELECT id FROM supervisors WHERE name=?", (name,)).fetchone()
+        if existing:
+            result[name] = existing["id"]
+        else:
+            cur = conn.execute("INSERT INTO supervisors (name) VALUES (?)", (name,))
+            result[name] = cur.lastrowid
+    conn.commit()
+    conn.close()
+    return result
+
+
 # ── Interviewers ───────────────────────────────────────────────────────────────
 
 def get_all_interviewers() -> list:

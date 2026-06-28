@@ -23,6 +23,7 @@ class SaveQCRequest(BaseModel):
     file_id: str
     filename: str
     wave_label: Optional[str] = None
+    job_id: Optional[str] = None
 
 
 # Column map: uppercase source column → dashboard schema column
@@ -126,7 +127,7 @@ async def save_qc_results(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    from job_store import file_store
+    from job_store import file_store, job_store
     from core.loader import DataLoader
     from core.cleaner import DataCleaner
 
@@ -141,6 +142,38 @@ async def save_qc_results(
         return _df_to_quality_records(df)
 
     records = await loop.run_in_executor(None, _load_map)
+
+    # Overlay QC flags from the job results so dashboard shows real flag counts
+    if req.job_id:
+        try:
+            job = await job_store.get(req.job_id)
+            if job and job.status == "complete":
+                checks = (job.results or {}).get("checks", [])
+                dur_flagged: set = set()
+                sl_flagged: set = set()
+                for check in checks:
+                    cname = check.get("check_name", "")
+                    for row in check.get("flagged_rows", []):
+                        iid = str(
+                            row.get("INSTANCE_ID") or row.get("instance_id") or
+                            row.get("Instance ID") or row.get("Instance_ID") or ""
+                        ).strip()
+                        if not iid:
+                            continue
+                        if "duration" in cname:
+                            dur_flagged.add(iid)
+                        if "straight" in cname:
+                            sl_flagged.add(iid)
+                for rec in records:
+                    iid = str(rec.get("instance_id") or "").strip()
+                    if not iid:
+                        continue
+                    if rec.get("duration_flag") is None:
+                        rec["duration_flag"] = "Flag" if iid in dur_flagged else "Pass"
+                    if rec.get("straight_lining") is None:
+                        rec["straight_lining"] = "Flag" if iid in sl_flagged else "Pass"
+        except Exception:
+            pass  # non-blocking — don't fail the save if job lookup fails
 
     upload_id = shared_db.insert_quality_records(
         project_id, user["id"], req.filename, records, req.wave_label

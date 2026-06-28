@@ -841,11 +841,22 @@ def list_interviewers(user: dict = Depends(get_current_user)):
 @router.post("/interviewers")
 def upsert_interviewer(body: UpsertInterviewerBody, user: dict = Depends(get_current_user)):
     _require_db()
-    _require_admin(user)
+    _require_upload(user)
     iid = shared_db.upsert_interviewer(
         body.interviewer_code, body.name, body.supervisor_id, body.region, body.is_active
     )
     return {"id": iid, **body.model_dump()}
+
+
+class BulkUpsertSupervisorsBody(BaseModel):
+    names: list[str]
+
+
+@router.post("/supervisors/bulk-upsert")
+def bulk_upsert_supervisors(body: BulkUpsertSupervisorsBody, user: dict = Depends(get_current_user)):
+    _require_db()
+    _require_upload(user)
+    return shared_db.upsert_supervisors_bulk(body.names)
 
 
 @router.get("/interviewers/{interviewer_code}/metrics")

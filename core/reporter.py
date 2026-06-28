@@ -72,6 +72,15 @@ _SHEET = {
 }
 _SEV_RANK = {"critical": 3, "warning": 2, "info": 1, "none": 0}
 
+# ── Interviewer risk scoring (mirrors routers/interviewers.py) ────────────────
+_RISK_WEIGHTS = {"fabrication": 0.40, "duration": 0.25, "straightlining": 0.25, "productivity": 0.10}
+_RISK_FLAG_MAP = {
+    "interviewer_duration_check":     "duration",
+    "straightlining_check":           "straightlining",
+    "fabrication_check":              "fabrication",
+    "interviewer_productivity_check": "productivity",
+}
+
 
 # ── Low-level cell helpers ────────────────────────────────────────────────────
 
@@ -178,6 +187,7 @@ class Reporter:
         if df_original is not None:
             self._write_itvr_performance(wb, all_results, df_original)
             self._write_productivity(wb, df_original)
+            self._write_risk_scorecard(wb, all_results, df_original)
 
         path = os.path.join(self.output_dir, f"qc_summary_{ts}.xlsx")
         wb.save(path)
@@ -253,19 +263,22 @@ class Reporter:
         _section_header(ws, r, 2, "KEY METRICS", span=4); r += 1
         _table_header(ws, r, 2, ["Metric", "Value"]); r += 1
         kpis = [
-            ("Total Records",            total_rows),
-            ("Total QC Flags",           total_flags),
-            ("Unique Flagged Records",   flagged_rows_count),
-            ("Error Rate",               f"{error_rate}%"),
-            ("Average Duration (min)",   avg_dur),
-            ("Critical Flags",           sum(r2.flag_count for r2 in results if r2.severity == "critical")),
-            ("Warning Flags",            sum(r2.flag_count for r2 in results if r2.severity == "warning")),
-            ("Info Flags",               sum(r2.flag_count for r2 in results if r2.severity == "info")),
+            ("Total Records",            total_rows,          "#,##0"),
+            ("Total QC Flags",           total_flags,         "#,##0"),
+            ("Unique Flagged Records",   flagged_rows_count,  "#,##0"),
+            ("Error Rate",               error_rate / 100,    "0.0%"),
+            ("Average Duration (min)",   avg_dur,             "0.0"),
+            ("Critical Flags",           sum(r2.flag_count for r2 in results if r2.severity == "critical"), "#,##0"),
+            ("Warning Flags",            sum(r2.flag_count for r2 in results if r2.severity == "warning"),  "#,##0"),
+            ("Info Flags",               sum(r2.flag_count for r2 in results if r2.severity == "info"),     "#,##0"),
         ]
-        for i, (metric, val) in enumerate(kpis):
+        for i, (metric, val, fmt) in enumerate(kpis):
             row_fill = FILL_ALT if i % 2 == 1 else None
             _cell(ws, r, 2, metric, bold=True, color=NAVY, fill=row_fill, border=True)
-            _cell(ws, r, 3, val, color=DARK, fill=row_fill, border=True)
+            c = _cell(ws, r, 3, val if not isinstance(val, str) else val,
+                      color=DARK, fill=row_fill, border=True)
+            if fmt and not isinstance(val, str):
+                c.number_format = fmt
             r += 1
         ws.row_dimensions[r].height = 10; r += 1
 
@@ -431,11 +444,11 @@ class Reporter:
             return
 
         explanation_cols = [c for c in flagged.columns if c.startswith("_")]
-        id_cols = [c for c in flagged.columns if any(
-            kw in c.lower() for kw in ["id", "interviewer", "date", "duration"]
-        ) and not c.startswith("_")]
-        id_cols = id_cols[:6]
-        display_cols = id_cols + explanation_cols
+        data_cols = [c for c in flagged.columns if not c.startswith("_")]
+        priority_kw = ["id", "interviewer", "instance", "date", "duration", "region", "enumerator"]
+        priority_cols = [c for c in data_cols if any(kw in c.lower() for kw in priority_kw)]
+        other_cols = [c for c in data_cols if c not in priority_cols]
+        display_cols = (priority_cols + other_cols)[:20] + explanation_cols
 
         if not display_cols:
             display_cols = list(flagged.columns)[:20]
@@ -565,6 +578,102 @@ class Reporter:
 
         _auto_width(ws, max_w=20)
         _freeze(ws, row=2)
+
+    # ── 7. RISK SCORECARD ─────────────────────────────────────────────────────
+
+    def _write_risk_scorecard(self, wb, results, df):
+        int_col = self._detect_col(df, ["interviewer_id", "interviewer", "int_id",
+                                         "enumerator_id", "enumerator"])
+        if not int_col:
+            return
+
+        dur_col = self._detect_col(df, ["duration_minutes", "duration"])
+
+        totals = df.groupby(int_col).size().rename("total_interviews")
+        perf = pd.DataFrame(index=totals.index)
+        perf.index.name = int_col
+        perf = perf.join(totals)
+
+        for key in _RISK_WEIGHTS:
+            perf[f"{key}_flags"] = 0
+
+        for res in results:
+            category = _RISK_FLAG_MAP.get(res.check_name)
+            if not category or res.flag_count == 0 or int_col not in res.flagged_rows.columns:
+                continue
+            counts = res.flagged_rows[int_col].value_counts()
+            for idx in perf.index:
+                perf.loc[idx, f"{category}_flags"] += int(counts.get(idx, 0))
+
+        for key in _RISK_WEIGHTS:
+            perf[f"{key}_rate"] = (
+                perf[f"{key}_flags"] / perf["total_interviews"].clip(lower=1)
+            ).clip(0, 1)
+
+        perf["risk_score"] = (
+            perf["fabrication_rate"]    * _RISK_WEIGHTS["fabrication"]    +
+            perf["duration_rate"]       * _RISK_WEIGHTS["duration"]       +
+            perf["straightlining_rate"] * _RISK_WEIGHTS["straightlining"] +
+            perf["productivity_rate"]   * _RISK_WEIGHTS["productivity"]
+        ).mul(100).round(1)
+
+        perf["total_flags"] = (
+            perf["fabrication_flags"] + perf["duration_flags"] +
+            perf["straightlining_flags"] + perf["productivity_flags"]
+        ).astype(int)
+        perf["flag_rate_%"] = (
+            perf["total_flags"] / perf["total_interviews"].clip(lower=1) * 100
+        ).round(1)
+
+        if dur_col:
+            num = pd.to_numeric(df[dur_col], errors="coerce")
+            perf = perf.join(
+                df.assign(_d=num).groupby(int_col)["_d"]
+                .agg(avg_duration="mean").round(1)
+            )
+
+        perf = perf.reset_index().sort_values("risk_score", ascending=False)
+
+        ws = wb.create_sheet("RISK SCORECARD")
+        ws.sheet_view.showGridLines = False
+
+        ws.column_dimensions["A"].width = 2
+        ws.row_dimensions[1].height = 8
+        _section_header(ws, 2, 1, "  INTERVIEWER RISK SCORECARD", span=12)
+        _cell(ws, 3, 1,
+              "RED ≥ 30 risk score  |  AMBER ≥ 15  |  GREEN < 15  "
+              "(weights: fabrication 40 %, duration 25 %, straightlining 25 %, productivity 10 %)",
+              size=9, color="FF555555")
+        ws.row_dimensions[4].height = 8
+
+        display_cols = [
+            int_col, "total_interviews",
+            "fabrication_flags", "duration_flags",
+            "straightlining_flags", "productivity_flags",
+            "total_flags", "flag_rate_%", "risk_score",
+        ]
+        if dur_col and "avg_duration" in perf.columns:
+            display_cols.append("avg_duration")
+
+        headers = [c.replace("_", " ").title() for c in display_cols]
+        _table_header(ws, 5, 1, headers)
+
+        for row_i, (_, rec) in enumerate(perf.iterrows(), start=6):
+            score = float(rec.get("risk_score", 0) or 0)
+            if score >= 30:
+                row_fill = FILL_RED
+            elif score >= 15:
+                row_fill = FILL_ORANGE
+            else:
+                row_fill = FILL_GREEN if row_i % 2 == 0 else None
+
+            for ci, col in enumerate(display_cols, start=1):
+                _cell(ws, row_i, ci, rec.get(col),
+                      fill=row_fill, border=True,
+                      align="center" if ci > 1 else "left")
+
+        _auto_width(ws)
+        _freeze(ws, row=6)
 
     # ── Utilities ─────────────────────────────────────────────────────────────
 
