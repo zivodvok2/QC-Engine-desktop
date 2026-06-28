@@ -1,0 +1,99 @@
+{
+  "missing_threshold": 0.1,
+  "missing_columns": [],
+  "missing_exclude_columns": ["open_ended", "email"],
+
+  "range_rules": [
+    { "column": "age", "min": 18, "max": 99 },
+    { "column": "duration_minutes", "min": 1, "max": 300 }
+  ],
+
+  "logic_rules": [
+    {
+      "description": "Under-18 respondents should not have monthly income",
+      "if_conditions":   [{ "column": "age",            "operator": "<",       "value": 18 }],
+      "then_conditions": [{ "column": "monthly_income", "operator": "is_null" }]
+    }
+  ],
+
+  "pattern_rules": [
+    {
+      "column": "phone",
+      "pattern": "^0[6-9][0-9]{8}$",
+      "description": "Valid SA mobile — 10 digits starting with 06–09"
+    }
+  ],
+
+  "duplicate_check": {
+    "enabled": true,
+    "subset_columns": ["respondent_id"]
+  },
+
+  "interview_duration": {
+    "enabled": true,
+    "column": "duration_minutes",
+    "min_expected": 8,
+    "max_expected": 60
+  },
+
+  "anomaly_check": {
+    "enabled": true,
+    "columns": ["monthly_income", "age"],
+    "multiplier": 1.5
+  },
+
+  "straightlining": {
+    "enabled": true,
+    "question_columns": ["Q1","Q2","Q3","Q4","Q5","Q6","Q7","Q8","Q9","Q10"],
+    "threshold": 0.9,
+    "interviewer_column": "interviewer_id",
+    "min_questions": 5
+  },
+
+  "interviewer_duration_check": {
+    "enabled": true,
+    "interviewer_column": "interviewer_id",
+    "duration_column": "duration_minutes",
+    "multiplier": 1.5,
+    "min_interviews": 3
+  },
+
+  "interviewer_productivity_check": {
+    "enabled": true,
+    "interviewer_column": "interviewer_id",
+    "multiplier": 1.5
+  },
+
+  "consent_eligibility_check": {
+    "enabled": true,
+    "screener_column": "consent",
+    "disqualify_operator": "==",
+    "disqualify_value": "Refused",
+    "subsequent_columns": ["Q1","Q2","Q3","Q4","Q5","Q6","Q7","Q8","Q9","Q10"]
+  },
+
+  "fabrication_check": {
+    "enabled": true,
+    "id_column": "respondent_id",
+    "numeric_columns": ["Q1","Q2","Q3","Q4","Q5"],
+    "interviewer_column": "interviewer_id",
+    "variance_threshold": 0.15,
+    "sequence_run_length": 5
+  },
+
+  "near_duplicate_check": {
+    "enabled": true,
+    "id_column": "respondent_id",
+    "unique_columns": ["phone"],
+    "combo_columns": ["age","gender","province"],
+    "max_combo_count": 3
+  },
+
+  "verbatim_check": {
+    "enabled": false,
+    "verbatim_columns": ["open_ended"],
+    "model": "llama-3.1-8b-instant",
+    "min_score": 2,
+    "sample_size": 50
+  }
+}
