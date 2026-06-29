@@ -1,16 +1,18 @@
 import React, { useEffect, useState } from 'react'
 import { X } from 'lucide-react'
 import { ONBOARDING_STEPS } from '../../data/onboarding'
+import { useAppStore } from '../../store/appStore'
 
 const STORAGE_KEY = 'servallab_onboarding_done'
 
 export function OnboardingTooltip() {
+  const dashboardMode = useAppStore((s) => s.dashboardMode)
   const [visible, setVisible] = useState(false)
   const [step, setStep] = useState(0)
 
   useEffect(() => {
-    if (!localStorage.getItem(STORAGE_KEY)) setVisible(true)
-  }, [])
+    if (!dashboardMode && !localStorage.getItem(STORAGE_KEY)) setVisible(true)
+  }, [dashboardMode])
 
   const close = () => {
     localStorage.setItem(STORAGE_KEY, '1')

@@ -1,7 +1,7 @@
 import React, { useState } from 'react'
-import { X, LogIn, UserPlus, Loader2 } from 'lucide-react'
+import { X, LogIn, UserPlus, Loader2, ShieldCheck } from 'lucide-react'
 import { useAppStore } from '../../store/appStore'
-import { login, register } from '../../api/auth'
+import { login, register, verifyOtp } from '../../api/auth'
 
 type Tab = 'login' | 'register'
 
@@ -19,6 +19,11 @@ export function LoginModal() {
   const [rPassword, setRPassword] = useState('')
   const [rPassword2, setRPassword2] = useState('')
 
+  // 2FA OTP step
+  const [otpUserId, setOtpUserId] = useState<number | null>(null)
+  const [demoOtp, setDemoOtp] = useState('')
+  const [otpCode, setOtpCode] = useState('')
+
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
@@ -29,9 +34,29 @@ export function LoginModal() {
     setLoading(true)
     try {
       const res = await login(email.trim().toLowerCase(), password)
-      loginUser(res.user, res.token)
+      if ('otp_required' in res) {
+        setOtpUserId(res.user_id)
+        setDemoOtp(res.demo_otp)
+      } else {
+        loginUser(res.user, res.token)
+      }
     } catch (err) {
       setError((err as Error).message || 'Login failed')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleVerifyOtp = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (otpUserId === null) return
+    setError('')
+    setLoading(true)
+    try {
+      const res = await verifyOtp(otpUserId, otpCode.trim())
+      loginUser(res.user, res.token)
+    } catch (err) {
+      setError((err as Error).message || 'Invalid code')
     } finally {
       setLoading(false)
     }
@@ -65,11 +90,13 @@ export function LoginModal() {
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-line">
           <div className="flex items-center gap-2">
-            {tab === 'login'
-              ? <LogIn size={15} className="text-accent" />
-              : <UserPlus size={15} className="text-accent" />}
+            {otpUserId !== null
+              ? <ShieldCheck size={15} className="text-accent" />
+              : tab === 'login'
+                ? <LogIn size={15} className="text-accent" />
+                : <UserPlus size={15} className="text-accent" />}
             <span className="font-display font-bold text-sm text-tx">
-              {tab === 'login' ? 'Sign in to Servalab' : 'Create an account'}
+              {otpUserId !== null ? 'Two-factor verification' : tab === 'login' ? 'Sign in to Servalab' : 'Create an account'}
             </span>
           </div>
           <button
@@ -80,6 +107,54 @@ export function LoginModal() {
           </button>
         </div>
 
+        {otpUserId !== null && (
+          <form onSubmit={handleVerifyOtp} className="p-5 space-y-4">
+            <p className="text-xs text-muted">
+              Enter the 6-digit code to finish signing in. This is a demo deployment with no email
+              server yet, so the code is shown below instead of being emailed.
+            </p>
+            <p className="text-xs text-accent bg-accent/10 border border-accent/30 rounded-lg px-3 py-2">
+              Demo code: <span className="font-mono font-bold">{demoOtp}</span>
+            </p>
+            <div>
+              <label className="label mb-1 block">Verification code</label>
+              <input
+                type="text"
+                value={otpCode}
+                onChange={(e) => setOtpCode(e.target.value)}
+                placeholder="000000"
+                inputMode="numeric"
+                maxLength={6}
+                required
+                autoFocus
+                className="w-full bg-surface2 border border-line rounded-lg px-3 py-2 text-sm text-tx placeholder:text-muted focus:outline-none focus:border-accent transition-colors tracking-widest"
+              />
+            </div>
+            {error && (
+              <p className="text-xs text-critical bg-critical/10 border border-critical/30 rounded-lg px-3 py-2">
+                {error}
+              </p>
+            )}
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full btn-primary flex items-center justify-center gap-2"
+            >
+              {loading ? <Loader2 size={14} className="animate-spin" /> : <ShieldCheck size={14} />}
+              {loading ? 'Verifying…' : 'Verify'}
+            </button>
+            <button
+              type="button"
+              onClick={() => { setOtpUserId(null); setOtpCode(''); setDemoOtp(''); setError('') }}
+              className="text-[11px] text-muted text-center w-full underline underline-offset-2"
+            >
+              Back to sign in
+            </button>
+          </form>
+        )}
+
+        {otpUserId === null && (
+        <>
         {/* Tab bar */}
         <div className="flex border-b border-line">
           {(['login', 'register'] as Tab[]).map((t) => (
@@ -226,6 +301,8 @@ export function LoginModal() {
               </button>
             </p>
           </form>
+        )}
+        </>
         )}
       </div>
     </div>

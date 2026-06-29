@@ -17,7 +17,7 @@ client.interceptors.response.use(
       import('../store/appStore').then(({ useAppStore }) => {
         const { logoutUser, openLogin } = useAppStore.getState()
         logoutUser()
-        openLogin()
+        openLogin('inline')
       })
     }
     const detail = err.response?.data?.detail
@@ -27,6 +27,6 @@ client.interceptors.response.use(
         : typeof detail === 'object' && detail?.error
           ? detail.error
           : err.message
-    return Promise.reject(new Error(message))
+    return Promise.reject(Object.assign(new Error(message), { status: err.response?.status }))
   },
 )

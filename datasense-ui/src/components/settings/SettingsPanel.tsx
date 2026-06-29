@@ -1,7 +1,8 @@
 import React, { useState } from 'react'
-import { X, ChevronDown, ChevronRight, RotateCcw, Eye, EyeOff, CheckCircle2, AlertCircle, Mail, MessageSquare } from 'lucide-react'
+import { X, ChevronDown, ChevronRight, RotateCcw, Eye, EyeOff, CheckCircle2, AlertCircle, Mail, MessageSquare, ShieldCheck, Loader2 } from 'lucide-react'
 import { relaunchOnboarding } from '../onboarding/OnboardingTooltip'
 import { useAppStore } from '../../store/appStore'
+import { enable2FA, disable2FA } from '../../api/auth'
 
 const APP_VERSION = '2.0.0'
 
@@ -39,12 +40,28 @@ function Accordion({ label, children }: { label: string; children: React.ReactNo
 interface Props { onClose: () => void }
 
 export function SettingsPanel({ onClose }: Props) {
-  const { groqApiKey, setGroqApiKey, config, updateConfig, theme, setTheme, accent, setAccent } = useAppStore()
+  const { groqApiKey, setGroqApiKey, config, updateConfig, theme, setTheme, accent, setAccent, authUser, authToken, setAuthUser } = useAppStore()
   const [showKey, setShowKey] = useState(false)
   const [localKey, setLocalKey] = useState(groqApiKey)
+  const [twoFaLoading, setTwoFaLoading] = useState(false)
+  const [twoFaError, setTwoFaError] = useState('')
 
   const saveKey = () => setGroqApiKey(localKey.trim())
   const hasKey = groqApiKey.length > 0
+
+  const toggle2FA = async () => {
+    if (!authToken) return
+    setTwoFaError('')
+    setTwoFaLoading(true)
+    try {
+      const updated = authUser?.totp_enabled ? await disable2FA(authToken) : await enable2FA(authToken)
+      setAuthUser(updated)
+    } catch (err) {
+      setTwoFaError((err as Error).message || 'Could not update 2FA setting')
+    } finally {
+      setTwoFaLoading(false)
+    }
+  }
 
   return (
     <div className="fixed inset-0 z-40 flex justify-end animate-fade-in">
@@ -150,6 +167,37 @@ export function SettingsPanel({ onClose }: Props) {
             </select>
           </div>
         </section>
+
+        {/* Security — 2FA, only when signed in */}
+        {authUser && (
+          <section className="space-y-3">
+            <p className="label">Security</p>
+            <div className="flex items-center gap-2 text-xs">
+              {authUser.totp_enabled
+                ? <><CheckCircle2 size={12} className="text-accent shrink-0" /><span className="text-accent">Two-factor authentication is on</span></>
+                : <><AlertCircle size={12} className="text-muted shrink-0" /><span className="text-muted">Two-factor authentication is off</span></>
+              }
+            </div>
+            <p className="text-xs text-muted leading-relaxed">
+              When enabled, signing in requires a one-time code in addition to your password.
+              This is a demo deployment with no email server yet, so the code is shown on screen
+              instead of being emailed.
+            </p>
+            {twoFaError && (
+              <p className="text-xs text-critical bg-critical/10 border border-critical/30 rounded-lg px-3 py-2">
+                {twoFaError}
+              </p>
+            )}
+            <button
+              onClick={toggle2FA}
+              disabled={twoFaLoading}
+              className="w-full flex items-center gap-2 btn-ghost text-sm justify-center"
+            >
+              {twoFaLoading ? <Loader2 size={14} className="animate-spin" /> : <ShieldCheck size={14} />}
+              {authUser.totp_enabled ? 'Disable 2FA' : 'Enable 2FA'}
+            </button>
+          </section>
+        )}
 
         {/* Onboarding */}
         <section className="space-y-2">

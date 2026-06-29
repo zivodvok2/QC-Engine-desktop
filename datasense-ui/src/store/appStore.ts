@@ -10,6 +10,11 @@ import type { AuthUser } from '../api/auth'
 
 type JobStatus = 'idle' | 'queued' | 'running' | 'complete' | 'failed'
 
+export const IS_DASHBOARD_DOMAIN = typeof window !== 'undefined' && (
+  window.location.hostname.includes('dashboard.') ||
+  new URLSearchParams(window.location.search).get('mode') === 'dashboard'
+)
+
 // ── Tab state types ───────────────────────────────────────────────────────────
 
 export interface IfCondition {
@@ -133,18 +138,20 @@ interface AppState {
   authUser: AuthUser | null
   authToken: string | null
   loginOpen: boolean
+  loginIntent: 'default' | 'inline'
   loginUser: (user: AuthUser, token: string) => void
   logoutUser: () => void
-  openLogin: () => void
+  setAuthUser: (user: AuthUser) => void
+  openLogin: (intent?: 'default' | 'inline') => void
   closeLogin: () => void
 
   // dashboard mode
   dashboardMode: boolean
   dashboardProjectId: number | null
-  dashboardView: 'overview' | 'project' | 'interviewers'
+  dashboardView: 'overview' | 'project' | 'interviewers' | 'admin'
   setDashboardMode: (on: boolean) => void
   setDashboardProject: (id: number | null) => void
-  setDashboardView: (view: 'overview' | 'project' | 'interviewers') => void
+  setDashboardView: (view: 'overview' | 'project' | 'interviewers' | 'admin') => void
 
   // session restore
   sessionRestored: boolean
@@ -201,8 +208,9 @@ export const useAppStore = create<AppState>((set) => ({
   })(),
   authToken: localStorage.getItem('ds_auth_token') ?? null,
   loginOpen: false,
+  loginIntent: 'default' as const,
   activeTab: 'QC Report',
-  dashboardMode: false,
+  dashboardMode: true,
   dashboardProjectId: null,
   dashboardView: 'overview' as const,
   sessionRestored: !!_session?.results,
@@ -280,14 +288,25 @@ export const useAppStore = create<AppState>((set) => ({
   loginUser: (user, token) => {
     localStorage.setItem('ds_auth_user', JSON.stringify(user))
     localStorage.setItem('ds_auth_token', token)
-    set({ authUser: user, authToken: token, loginOpen: false })
+    set((s) => {
+      const goDashboard = s.loginIntent === 'default'
+      return {
+        authUser: user, authToken: token, loginOpen: false,
+        loginIntent: 'default',
+        ...(goDashboard ? { dashboardMode: true } : {}),
+      }
+    })
   },
   logoutUser: () => {
     localStorage.removeItem('ds_auth_user')
     localStorage.removeItem('ds_auth_token')
-    set({ authUser: null, authToken: null })
+    set({ authUser: null, authToken: null, dashboardMode: true })
   },
-  openLogin: () => set({ loginOpen: true }),
+  setAuthUser: (user) => {
+    localStorage.setItem('ds_auth_user', JSON.stringify(user))
+    set({ authUser: user })
+  },
+  openLogin: (intent) => set({ loginOpen: true, loginIntent: intent ?? 'default' }),
   closeLogin: () => set({ loginOpen: false }),
 
   setDashboardMode: (on) => set({ dashboardMode: on }),

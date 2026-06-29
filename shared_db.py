@@ -30,6 +30,17 @@ def db_available() -> bool:
 
 # ── Internal helpers ───────────────────────────────────────────────────────────
 
+def _safe_add_column(conn, table: str, column: str, col_type: str):
+    """Add a column if it doesn't already exist. Safe to call repeatedly."""
+    try:
+        existing = [row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()]
+        if column not in existing:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
+            conn.commit()
+    except Exception:
+        pass
+
+
 def _log_upload(conn, upload_id, project_id, report_type, uploaded_by, filename, row_count, wave_label=None):
     conn.execute(
         """INSERT INTO upload_log (upload_id, project_id, report_type, uploaded_by, filename, row_count, wave_label)
@@ -82,6 +93,30 @@ def create_user(email: str, password_hash: str, full_name: str, role: str, creat
         return False, "Email already registered."
     finally:
         conn.close()
+
+
+def set_user_otp(user_id: int, otp_hash: str, expires_at_iso: str):
+    conn = get_conn()
+    conn.execute(
+        "UPDATE users SET otp_code=?, otp_expires_at=? WHERE id=?",
+        (otp_hash, expires_at_iso, user_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def clear_user_otp(user_id: int):
+    conn = get_conn()
+    conn.execute("UPDATE users SET otp_code=NULL, otp_expires_at=NULL WHERE id=?", (user_id,))
+    conn.commit()
+    conn.close()
+
+
+def set_2fa_enabled(user_id: int, enabled: bool):
+    conn = get_conn()
+    conn.execute("UPDATE users SET totp_enabled=? WHERE id=?", (1 if enabled else 0, user_id))
+    conn.commit()
+    conn.close()
 
 
 def update_user_role(user_id: int, role: str):
@@ -177,7 +212,8 @@ def create_project_full(
 def update_project(project_id: int, **kwargs):
     allowed = {"name", "job_number", "client", "sample_target", "start_date", "end_date",
                "status", "backcheck_target", "listenin_target", "accompaniment_target",
-               "loi_min_minutes", "loi_pct_threshold", "flag_warning_pct", "flag_critical_pct"}
+               "loi_min_minutes", "loi_pct_threshold", "flag_warning_pct", "flag_critical_pct",
+               "column_config"}
     fields = {k: v for k, v in kwargs.items() if k in allowed}
     if not fields:
         return
@@ -471,6 +507,22 @@ def get_upload_log(project_id: Optional[int] = None) -> list:
     return [dict(r) for r in rows]
 
 
+def lock_upload(upload_id: str):
+    conn = get_conn()
+    conn.execute("UPDATE upload_log SET is_locked=1 WHERE upload_id=?", (upload_id,))
+    conn.commit()
+    conn.close()
+
+
+def is_upload_locked(upload_id: str) -> bool:
+    if not db_available():
+        return False
+    conn = get_conn()
+    row = conn.execute("SELECT is_locked FROM upload_log WHERE upload_id=?", (upload_id,)).fetchone()
+    conn.close()
+    return bool(row and row["is_locked"])
+
+
 def delete_upload(upload_id: str, report_type: str):
     table_map = {
         "quality_report": "quality_report_records",
@@ -586,11 +638,219 @@ def get_dashboard_summary() -> list:
 # ── Activity feed ──────────────────────────────────────────────────────────────
 
 def init_tables():
-    """Create extended tables and apply additive migrations."""
-    if not db_available():
-        return
+    """Create the full base schema (mirrors dashboard/database.py::init_db) plus
+    extended tables, and apply additive migrations. This is the only schema-init
+    path the FastAPI app runs, so it must be self-sufficient — it cannot assume
+    dashboard/database.py's init_db() has ever executed against this DB file."""
     conn = get_conn()
-    conn.execute("""
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            email TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            full_name TEXT NOT NULL,
+            role TEXT NOT NULL DEFAULT 'other',
+            is_active INTEGER DEFAULT 1,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            created_by INTEGER REFERENCES users(id),
+            interviewer_code TEXT,
+            totp_enabled INTEGER DEFAULT 0,
+            otp_code TEXT,
+            otp_expires_at TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS projects (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            job_number TEXT,
+            client TEXT,
+            sample_target INTEGER DEFAULT 0,
+            backcheck_target REAL DEFAULT 0.20,
+            listenin_target REAL DEFAULT 0.10,
+            accompaniment_target REAL DEFAULT 0.20,
+            loi_min_minutes REAL DEFAULT 0,
+            loi_pct_threshold REAL DEFAULT 0.50,
+            flag_warning_pct REAL DEFAULT 5.0,
+            flag_critical_pct REAL DEFAULT 10.0,
+            start_date DATE,
+            end_date DATE,
+            status TEXT DEFAULT 'active',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            created_by INTEGER REFERENCES users(id),
+            column_config TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS project_assignments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
+            user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+            assigned_by INTEGER REFERENCES users(id),
+            assigned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(project_id, user_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS quality_report_records (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
+            upload_id TEXT NOT NULL,
+            uploaded_by INTEGER REFERENCES users(id),
+            upload_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            instance_id TEXT,
+            interviewer_id TEXT,
+            interview_date DATE,
+            start_time TEXT,
+            end_time TEXT,
+            duration_minutes REAL,
+            duration_validation TEXT,
+            duration_flag TEXT,
+            straight_lining TEXT,
+            long_pause TEXT,
+            gps_status TEXT,
+            phone_present TEXT,
+            audio_present TEXT,
+            region TEXT,
+            location TEXT,
+            sample_point_id TEXT,
+            approval_status TEXT,
+            qc_comments TEXT,
+            extra_data TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS listen_in_records (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
+            upload_id TEXT,
+            logged_by INTEGER REFERENCES users(id),
+            log_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            instance_id TEXT,
+            interviewer_id TEXT,
+            region TEXT,
+            listen_date DATE,
+            listen_type TEXT,
+            result TEXT,
+            issues_noted TEXT,
+            action_taken TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS backcheck_records (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
+            upload_id TEXT NOT NULL,
+            uploaded_by INTEGER REFERENCES users(id),
+            upload_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            bc_instance_id TEXT,
+            original_instance_id TEXT,
+            interview_status TEXT,
+            region TEXT,
+            location TEXT,
+            sample_point_id TEXT,
+            backchecker_id TEXT,
+            interviewer_id TEXT,
+            script_name TEXT,
+            interview_date DATE,
+            interview_start_time TEXT,
+            backcheck_date DATE,
+            backcheck_time TEXT,
+            error_01 INTEGER DEFAULT 0,
+            error_02 INTEGER DEFAULT 0,
+            error_03 INTEGER DEFAULT 0,
+            error_04 INTEGER DEFAULT 0,
+            error_05 INTEGER DEFAULT 0,
+            error_06 INTEGER DEFAULT 0,
+            error_07 INTEGER DEFAULT 0,
+            error_08 INTEGER DEFAULT 0,
+            error_09 INTEGER DEFAULT 0,
+            error_10 INTEGER DEFAULT 0,
+            error_11 INTEGER DEFAULT 0,
+            error_12 INTEGER DEFAULT 0,
+            error_13 INTEGER DEFAULT 0
+        );
+
+        CREATE TABLE IF NOT EXISTS cancelled_interview_records (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
+            upload_id TEXT NOT NULL,
+            uploaded_by INTEGER REFERENCES users(id),
+            upload_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            instance_id TEXT,
+            region TEXT,
+            location TEXT,
+            sample_point_id TEXT,
+            interviewer_id TEXT,
+            script_name TEXT,
+            interview_date DATE,
+            start_time TEXT,
+            end_time TEXT,
+            interview_length REAL,
+            active_length REAL,
+            avg_length_sample_point REAL,
+            avg_length_region REAL,
+            avg_length_project REAL,
+            idle_time REAL,
+            gap_to_last REAL,
+            same_day_finish TEXT,
+            qf_a TEXT,
+            qf_b TEXT,
+            qf_c TEXT,
+            qf_d TEXT,
+            qf_e TEXT,
+            qf_f TEXT,
+            interviewer_performance TEXT,
+            backcheck_result_telephone TEXT,
+            backcheck_result_f2f TEXT,
+            backcheck_result_independent TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS performance_records (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
+            upload_id TEXT NOT NULL,
+            uploaded_by INTEGER REFERENCES users(id),
+            upload_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            interviewer_id TEXT,
+            region TEXT,
+            first_interview DATE,
+            last_interview DATE,
+            interview_completes INTEGER DEFAULT 0,
+            followup_completes INTEGER DEFAULT 0,
+            ecs_completes INTEGER DEFAULT 0,
+            work_summary INTEGER DEFAULT 0,
+            accompaniments INTEGER DEFAULT 0,
+            cancelled_interviews INTEGER DEFAULT 0,
+            backcheck_telephone_created INTEGER DEFAULT 0,
+            backcheck_f2f_created INTEGER DEFAULT 0,
+            backcheck_f2f_infield INTEGER DEFAULT 0,
+            backcheck_total INTEGER DEFAULT 0,
+            backcheck_completed INTEGER DEFAULT 0
+        );
+
+        CREATE TABLE IF NOT EXISTS timing_records (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
+            upload_id TEXT NOT NULL,
+            uploaded_by INTEGER REFERENCES users(id),
+            upload_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            instance_id TEXT,
+            interviewer_id TEXT,
+            region TEXT,
+            interview_date DATE,
+            duration_minutes REAL
+        );
+
+        CREATE TABLE IF NOT EXISTS upload_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            upload_id TEXT NOT NULL,
+            project_id INTEGER REFERENCES projects(id),
+            report_type TEXT NOT NULL,
+            uploaded_by INTEGER REFERENCES users(id),
+            upload_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            filename TEXT,
+            row_count INTEGER DEFAULT 0,
+            notes TEXT,
+            wave_label TEXT,
+            is_locked INTEGER DEFAULT 0
+        );
+
         CREATE TABLE IF NOT EXISTS supervisors (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,
@@ -598,9 +858,8 @@ def init_tables():
             phone TEXT,
             region TEXT,
             created_at TEXT DEFAULT (datetime('now'))
-        )
-    """)
-    conn.execute("""
+        );
+
         CREATE TABLE IF NOT EXISTS interviewers (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             interviewer_code TEXT UNIQUE NOT NULL,
@@ -609,14 +868,41 @@ def init_tables():
             region TEXT,
             is_active INTEGER DEFAULT 1,
             created_at TEXT DEFAULT (datetime('now'))
-        )
+        );
     """)
-    # Additive migrations — safe to run repeatedly
-    try:
-        conn.execute("ALTER TABLE users ADD COLUMN interviewer_code TEXT")
-    except Exception:
-        pass
     conn.commit()
+
+    # Additive migrations — safe to run repeatedly, cover DBs created before
+    # any of the columns above were part of the initial CREATE TABLE.
+    _safe_add_column(conn, "users", "interviewer_code", "TEXT")
+    _safe_add_column(conn, "users", "totp_enabled", "INTEGER DEFAULT 0")
+    _safe_add_column(conn, "users", "otp_code", "TEXT")
+    _safe_add_column(conn, "users", "otp_expires_at", "TEXT")
+    _safe_add_column(conn, "projects", "column_config", "TEXT")
+    _safe_add_column(conn, "projects", "job_number", "TEXT")
+    _safe_add_column(conn, "projects", "loi_min_minutes", "REAL DEFAULT 0")
+    _safe_add_column(conn, "projects", "loi_pct_threshold", "REAL DEFAULT 0.50")
+    _safe_add_column(conn, "projects", "flag_warning_pct", "REAL DEFAULT 5.0")
+    _safe_add_column(conn, "projects", "flag_critical_pct", "REAL DEFAULT 10.0")
+    _safe_add_column(conn, "quality_report_records", "extra_data", "TEXT")
+    _safe_add_column(conn, "upload_log", "notes", "TEXT")
+    _safe_add_column(conn, "upload_log", "wave_label", "TEXT")
+    _safe_add_column(conn, "upload_log", "is_locked", "INTEGER DEFAULT 0")
+    conn.commit()
+
+    # Seed a default admin if no users exist at all — otherwise a fresh
+    # FastAPI-only deployment has no way to ever create an admin account,
+    # since /auth/register always assigns the 'other' role.
+    existing = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+    if existing == 0:
+        import bcrypt
+        pw = bcrypt.hashpw(b"admin1234", bcrypt.gensalt()).decode()
+        conn.execute(
+            "INSERT INTO users (email, password_hash, full_name, role) VALUES (?,?,?,?)",
+            ("admin@servallab.com", pw, "System Admin", "qc_executive"),
+        )
+        conn.commit()
+
     conn.close()
 
 

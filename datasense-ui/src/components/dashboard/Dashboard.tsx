@@ -1,6 +1,6 @@
 import React from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { ArrowLeft, LayoutDashboard, Loader2, LogIn, Users } from 'lucide-react'
+import { ArrowLeft, LayoutDashboard, Loader2, LogIn, Settings, Users } from 'lucide-react'
 import { useAppStore } from '../../store/appStore'
 
 const IS_DASHBOARD_DOMAIN = typeof window !== 'undefined' && (
@@ -9,8 +9,9 @@ const IS_DASHBOARD_DOMAIN = typeof window !== 'undefined' && (
 )
 import { getDashboardSummary, type ProjectSummary } from '../../api/dashboard'
 import { Overview } from './Overview'
-import { ProjectDetail } from './ProjectDetail'
+import { ProjectDetail, ADMIN_ROLES } from './ProjectDetail'
 import { InterviewerDirectory } from './InterviewerDirectory'
+import { AdminTab } from './tabs/AdminTab'
 
 export function Dashboard() {
   const {
@@ -18,6 +19,7 @@ export function Dashboard() {
     dashboardProjectId, dashboardView,
     setDashboardMode, setDashboardProject, setDashboardView, openLogin,
   } = useAppStore()
+  const isAdmin = authUser && ADMIN_ROLES.has(authUser.role)
   const token = authToken ?? ''
 
   const { data: summary = [], isLoading } = useQuery({
@@ -67,6 +69,20 @@ export function Dashboard() {
           Interviewers
         </button>
 
+        {isAdmin && (
+          <button
+            onClick={() => setDashboardView('admin')}
+            className={`flex items-center gap-2 px-4 py-2.5 text-sm transition-colors ${
+              dashboardView === 'admin'
+                ? 'text-accent bg-accent/10 border-r-2 border-accent'
+                : 'text-muted hover:text-tx hover:bg-surface2'
+            }`}
+          >
+            <Settings size={13} />
+            Admin
+          </button>
+        )}
+
         <div className="px-3 py-2 mt-1">
           <p className="text-[10px] text-muted uppercase tracking-wider">Projects</p>
         </div>
@@ -75,7 +91,7 @@ export function Dashboard() {
         <div className="flex-1 overflow-y-auto">
           {!token ? (
             <button
-              onClick={openLogin}
+              onClick={() => openLogin()}
               className="w-full flex items-center gap-2 px-4 py-3 text-xs text-muted hover:text-accent transition-colors"
             >
               <LogIn size={12} /> Sign in to view projects
@@ -119,6 +135,7 @@ export function Dashboard() {
           {dashboardView === 'overview' && <Overview onSelectProject={setDashboardProject} />}
           {dashboardView === 'project' && dashboardProjectId !== null && <ProjectDetail id={dashboardProjectId} />}
           {dashboardView === 'interviewers' && <InterviewerDirectory />}
+          {dashboardView === 'admin' && isAdmin && <AdminTab />}
         </div>
       </main>
     </div>

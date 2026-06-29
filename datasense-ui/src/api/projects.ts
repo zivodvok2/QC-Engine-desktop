@@ -7,6 +7,7 @@ export interface Project {
   status: string
   sample_target: number
   job_number: string | null
+  column_config?: string | null
 }
 
 export interface SaveQCResult {
@@ -42,10 +43,14 @@ export async function saveQCResults(
   token: string,
   waveLabel?: string,
   jobId?: string,
+  columnConfig?: Record<string, string>,
 ): Promise<SaveQCResult> {
   const { data } = await client.post<SaveQCResult>(
     `/api/projects/${projectId}/qc-results`,
-    { file_id: fileId, filename, wave_label: waveLabel || null, job_id: jobId || null },
+    {
+      file_id: fileId, filename, wave_label: waveLabel || null, job_id: jobId || null,
+      column_config: columnConfig || null,
+    },
     { headers: authHeader(token) },
   )
   return data

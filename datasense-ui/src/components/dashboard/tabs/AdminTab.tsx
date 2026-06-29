@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { UserPlus, Loader2, Trash2, UserCheck, UserX, Plus, Search, Upload } from 'lucide-react'
+import { UserPlus, Loader2, Trash2, UserCheck, UserX, Plus, Search, Upload, Lock } from 'lucide-react'
 import { useAppStore } from '../../../store/appStore'
 import {
   getDashboardUsers, createDashboardUser, updateUserRole, toggleUserActive,
@@ -769,12 +769,18 @@ export function AdminTab({ projectId }: Props) {
                     <td className="py-1.5 pr-3 text-muted">{u.uploader_name ?? '—'}</td>
                     <td className="py-1.5 pr-3 text-muted">{u.upload_date?.slice(0, 10)}</td>
                     <td>
-                      <button
-                        onClick={() => delUploadMut.mutate({ uid: u.upload_id, rt: u.report_type })}
-                        className="p-1 text-muted hover:text-critical transition-colors"
-                      >
-                        <Trash2 size={12} />
-                      </button>
+                      {u.is_locked ? (
+                        <span className="p-1 text-muted inline-flex" title="Locked — saved upload cannot be deleted">
+                          <Lock size={12} />
+                        </span>
+                      ) : (
+                        <button
+                          onClick={() => delUploadMut.mutate({ uid: u.upload_id, rt: u.report_type })}
+                          className="p-1 text-muted hover:text-critical transition-colors"
+                        >
+                          <Trash2 size={12} />
+                        </button>
+                      )}
                     </td>
                   </tr>
                 ))}

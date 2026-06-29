@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { Download, ChevronDown, ChevronUp, Info, XCircle, Activity, Sparkles, FileText, Database, ChevronRight, Check, Filter, Search, Users, Loader2 } from 'lucide-react'
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, PieChart, Pie, Legend } from 'recharts'
 import { useAppStore } from '../../store/appStore'
 import { downloadReport } from '../../api/qc'
 import { explainFlags, generateQCSummary } from '../../api/ai'
@@ -12,6 +13,13 @@ import type { CheckResult } from '../../types'
 import type { Project } from '../../api/projects'
 
 const SEV_ORDER: Record<string, number> = { critical: 0, warning: 1, info: 2 }
+const SEV_COLORS: Record<string, string> = { critical: '#f04a6a', warning: '#f0c04a', info: '#4af0a0' }
+const RISK_COLORS: Record<string, string> = { HIGH: '#f04a6a', MEDIUM: '#f0c04a', LOW: '#4af0a0' }
+const CHART_TOOLTIP_STYLE = {
+  contentStyle: { background: '#111318', border: '1px solid #1f2330', borderRadius: 6 },
+  labelStyle: { color: '#e8eaf2' },
+  itemStyle: { color: '#4af0a0' },
+}
 
 function MetricCard({ label, value, color }: { label: string; value: number | string; color?: string }) {
   return (
@@ -148,10 +156,8 @@ function CheckAccordion({
   )
 }
 
-function InterviewerRiskPanel() {
-  const { results, jobId, fileId, jobStatus, config, itvTabState, setItvTabState } = useAppStore()
-  const [open, setOpen] = useState(true)
-  const [promptCol, setPromptCol] = useState('')
+function useInterviewerRiskRows() {
+  const { results, jobId, fileId, jobStatus, config, itvTabState } = useAppStore()
 
   const interviewerCol = (
     [
@@ -199,6 +205,24 @@ function InterviewerRiskPanel() {
     ? (itvTabState.intColName || itvTabState.intCol)
     : (riskQuery.data?.interviewer_column ?? interviewerCol)
 
+  return {
+    results,
+    interviewerCol,
+    hasItvRows,
+    rows,
+    colName,
+    isLoading: riskQuery.isPending && !hasItvRows,
+    isError: riskQuery.isError && !hasItvRows,
+  }
+}
+
+function InterviewerRiskPanel() {
+  const { setItvTabState } = useAppStore()
+  const [open, setOpen] = useState(true)
+  const [promptCol, setPromptCol] = useState('')
+
+  const { results, interviewerCol, hasItvRows, rows, colName, isLoading, isError } = useInterviewerRiskRows()
+
   if (!results) return null
 
   if (!interviewerCol && !hasItvRows) {
@@ -227,13 +251,12 @@ function InterviewerRiskPanel() {
     )
   }
 
-  if (riskQuery.isError && !hasItvRows) return null
+  if (isError) return null
 
   const high = rows.filter((r) => r.risk_level === 'HIGH').length
   const medium = rows.filter((r) => r.risk_level === 'MEDIUM').length
   const low = rows.filter((r) => r.risk_level === 'LOW').length
   const top = rows.slice(0, 10)
-  const isLoading = riskQuery.isPending && !hasItvRows
   const showDur = top.some((r) => r.avg_duration != null)
   const showSup = top.some((r) => r.supervisor && r.supervisor !== 'None' && r.supervisor !== 'null')
 
@@ -374,6 +397,92 @@ function InterviewerRiskPanel() {
   )
 }
 
+function SeverityBreakdownChart({ flaggedBySeverity }: { flaggedBySeverity: Record<string, number> }) {
+  const data = [
+    { name: 'Critical', value: flaggedBySeverity.critical ?? 0, fill: SEV_COLORS.critical },
+    { name: 'Warning',  value: flaggedBySeverity.warning ?? 0,  fill: SEV_COLORS.warning },
+    { name: 'Info',     value: flaggedBySeverity.info ?? 0,     fill: SEV_COLORS.info },
+  ].filter((d) => d.value > 0)
+
+  return (
+    <div className="card p-4">
+      <p className="text-xs font-medium text-tx mb-3">Flags by Severity</p>
+      {data.length > 0 ? (
+        <ResponsiveContainer width="100%" height={180}>
+          <PieChart>
+            <Pie
+              data={data}
+              cx="50%"
+              cy="45%"
+              outerRadius={62}
+              dataKey="value"
+              label={({ name, percent }) => `${(percent * 100).toFixed(0)}%`}
+              labelLine={false}
+            >
+              {data.map((entry, i) => (
+                <Cell key={i} fill={entry.fill} />
+              ))}
+            </Pie>
+            <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 10, color: '#8b90a8' }} />
+            <Tooltip {...CHART_TOOLTIP_STYLE} formatter={(v: number, name: string) => [v, name]} />
+          </PieChart>
+        </ResponsiveContainer>
+      ) : (
+        <p className="text-xs text-muted text-center mt-8">No flags to chart.</p>
+      )}
+    </div>
+  )
+}
+
+function InterviewerFlagChart({ nameFilter }: { nameFilter: string }) {
+  const { results, interviewerCol, rows, colName, isLoading } = useInterviewerRiskRows()
+
+  if (!results) return null
+
+  const filtered = nameFilter.trim()
+    ? rows.filter((r) => String(r[colName] ?? r[interviewerCol] ?? '').toLowerCase().includes(nameFilter.trim().toLowerCase()))
+    : rows
+  const top = filtered.slice(0, 10)
+
+  return (
+    <div className="card p-4">
+      <p className="text-xs font-medium text-tx mb-3">Top 10 Interviewers by Flag Count</p>
+      {isLoading && (
+        <div className="flex items-center justify-center gap-2 h-[180px] text-xs text-muted">
+          <Loader2 size={12} className="animate-spin" />
+          Computing…
+        </div>
+      )}
+      {!isLoading && top.length > 0 && (
+        <ResponsiveContainer width="100%" height={180}>
+          <BarChart data={top} margin={{ top: 4, right: 4, left: -28, bottom: 32 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#1f2330" />
+            <XAxis
+              dataKey={colName}
+              tick={{ fill: '#8b90a8', fontSize: 9 }}
+              angle={-35}
+              textAnchor="end"
+              interval={0}
+            />
+            <YAxis allowDecimals={false} tick={{ fill: '#8b90a8', fontSize: 9 }} />
+            <Tooltip {...CHART_TOOLTIP_STYLE} formatter={(v: number) => [v, 'Flags']} />
+            <Bar dataKey="total_flags" radius={[3, 3, 0, 0]}>
+              {top.map((r, i) => (
+                <Cell key={i} fill={RISK_COLORS[r.risk_level] ?? SEV_COLORS.info} />
+              ))}
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+      )}
+      {!isLoading && top.length === 0 && (
+        <p className="text-xs text-muted text-center mt-8">
+          {nameFilter.trim() ? 'No interviewers match that filter.' : 'No interviewer data available.'}
+        </p>
+      )}
+    </div>
+  )
+}
+
 type UploadStatus = 'idle' | 'uploading' | 'done' | 'error'
 
 const SUPPORT_FILES = [
@@ -458,8 +567,16 @@ function SupportingFilesSection({ projectId, waveLabel, token }: { projectId: nu
   )
 }
 
+const STANDARD_FIELDS: { key: string; label: string; aliases: string[] }[] = [
+  { key: 'interviewer_id',   label: 'Interviewer ID',     aliases: ['INTERVIEWER_ID', 'INTERVIEWER ID'] },
+  { key: 'instance_id',      label: 'Instance/Record ID', aliases: ['INSTANCE_ID', 'INSTANCE ID'] },
+  { key: 'interview_date',   label: 'Interview date',     aliases: ['INTERVIEW_DATE', 'INTERVIEW DATE'] },
+  { key: 'duration_minutes', label: 'Duration (minutes)', aliases: ['DURATION_MINUTES', 'DURATION MINUTES'] },
+  { key: 'region',           label: 'Region',             aliases: ['REGION'] },
+]
+
 function SaveToProject() {
-  const { authUser, authToken, fileId, jobId, filename, openLogin, setDashboardMode, setDashboardProject } = useAppStore()
+  const { authUser, authToken, fileId, jobId, filename, columnNames, openLogin, setDashboardMode, setDashboardProject } = useAppStore()
   const [expanded, setExpanded] = useState(false)
   const [mode, setMode] = useState<'pick' | 'new'>('pick')
   const [selectedId, setSelectedId] = useState<number | ''>('')
@@ -469,12 +586,17 @@ function SaveToProject() {
   const [savedProjectId, setSavedProjectId] = useState<number | null>(null)
   const [saveError, setSaveError] = useState('')
   const [suggestedWave, setSuggestedWave] = useState('')
+  const [pendingDuplicateName, setPendingDuplicateName] = useState('')
+  const [columnConfig, setColumnConfig] = useState<Record<string, string>>({})
 
   const projectsQuery = useQuery<Project[]>({
     queryKey: ['projects', authToken],
     queryFn: () => getProjects(authToken!),
     enabled: !!authToken && expanded,
   })
+
+  const upperCols = columnNames.map((c) => c.trim().toUpperCase())
+  const unmappedFields = STANDARD_FIELDS.filter((f) => !f.aliases.some((a) => upperCols.includes(a)))
 
   const saveMutation = useMutation({
     mutationFn: async () => {
@@ -491,18 +613,40 @@ function SaveToProject() {
         projectId = Number(selectedId)
       }
 
-      const result = await saveQCResults(projectId, fileId, filename, authToken, waveLabel.trim() || undefined, jobId ?? undefined)
+      const finalColumnConfig = Object.fromEntries(Object.entries(columnConfig).filter(([, v]) => v))
+      const result = await saveQCResults(
+        projectId, fileId, filename, authToken,
+        waveLabel.trim() || undefined, jobId ?? undefined,
+        Object.keys(finalColumnConfig).length ? finalColumnConfig : undefined,
+      )
       setSavedProjectId(projectId)
       return result
     },
     onSuccess: () => {
       setSaved(true)
       setSaveError('')
+      setPendingDuplicateName('')
     },
     onError: (err) => {
+      const status = (err as { status?: number }).status
+      if (mode === 'new' && status === 409) {
+        setPendingDuplicateName(newName.trim())
+      } else {
+        setPendingDuplicateName('')
+      }
       setSaveError((err as Error).message)
     },
   })
+
+  // Once "Use existing project instead" switches back to pick mode, pre-select the matching project
+  useEffect(() => {
+    if (!pendingDuplicateName || !projectsQuery.data) return
+    const found = projectsQuery.data.find((p) => p.name.toLowerCase() === pendingDuplicateName.toLowerCase())
+    if (found) {
+      setSelectedId(found.id)
+      setPendingDuplicateName('')
+    }
+  }, [pendingDuplicateName, projectsQuery.data])
 
   // Suggest next wave label when a project is selected
   const { data: uploadLog } = useQuery({
@@ -533,7 +677,7 @@ function SaveToProject() {
           <Database size={14} />
           Save results to a dashboard project
         </div>
-        <button onClick={openLogin} className="btn-ghost text-xs flex items-center gap-1">
+        <button onClick={() => openLogin('inline')} className="btn-ghost text-xs flex items-center gap-1">
           Sign in <ChevronRight size={12} />
         </button>
       </div>
@@ -546,7 +690,7 @@ function SaveToProject() {
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-2 text-accent text-sm">
             <Check size={14} />
-            Results saved to project.
+            Results saved to project — upload is now locked.
           </div>
           {savedProjectId !== null && (
             <button
@@ -647,8 +791,38 @@ function SaveToProject() {
             )}
           </div>
 
+          {unmappedFields.length > 0 && (
+            <div className="space-y-1.5 pt-1 border-t border-line/60">
+              <p className="text-[10px] text-muted uppercase tracking-wider">Map columns (not auto-detected)</p>
+              {unmappedFields.map((f) => (
+                <div key={f.key} className="flex items-center gap-2">
+                  <span className="text-xs text-muted w-32 shrink-0">{f.label}</span>
+                  <select
+                    value={columnConfig[f.key] ?? ''}
+                    onChange={(e) => setColumnConfig((c) => ({ ...c, [f.key]: e.target.value }))}
+                    className="flex-1 bg-surface2 border border-line rounded px-2 py-1 text-xs text-tx"
+                  >
+                    <option value="">— skip —</option>
+                    {columnNames.map((c) => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </div>
+              ))}
+            </div>
+          )}
+
           {saveError && (
-            <p className="text-xs text-critical bg-critical/10 border border-critical/30 rounded px-3 py-2">{saveError}</p>
+            <div className="text-xs text-critical bg-critical/10 border border-critical/30 rounded px-3 py-2 space-y-1.5">
+              <p>{saveError}</p>
+              {pendingDuplicateName && (
+                <button
+                  type="button"
+                  onClick={() => setMode('pick')}
+                  className="text-[11px] text-accent underline underline-offset-2"
+                >
+                  Use existing project instead
+                </button>
+              )}
+            </div>
           )}
 
           <button
@@ -671,6 +845,7 @@ export function QCReport() {
   const [sevFilter, setSevFilter] = useState<'all' | 'critical' | 'warning' | 'info'>('all')
   const [minFlags, setMinFlags] = useState(0)
   const [checkSearch, setCheckSearch] = useState('')
+  const [itvFilter, setItvFilter] = useState('')
 
   const summaryMutation = useMutation({
     mutationFn: () =>
@@ -844,6 +1019,16 @@ export function QCReport() {
               className="w-full pl-6 py-0.5 text-xs"
             />
           </div>
+          <div className="relative flex-1 min-w-32">
+            <Users size={11} className="absolute left-2 top-1/2 -translate-y-1/2 text-muted" />
+            <input
+              type="text"
+              placeholder="Filter interviewer chart…"
+              value={itvFilter}
+              onChange={e => setItvFilter(e.target.value)}
+              className="w-full pl-6 py-0.5 text-xs"
+            />
+          </div>
           {(sevFilter !== 'all' || minFlags > 0 || checkSearch) && (
             <button
               onClick={() => { setSevFilter('all'); setMinFlags(0); setCheckSearch('') }}
@@ -858,6 +1043,12 @@ export function QCReport() {
             Showing {filteredMain.length + filteredSupp.length} of {totalChecks} checks
           </p>
         )}
+      </div>
+
+      {/* Visuals — severity breakdown + top interviewer flags */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <SeverityBreakdownChart flaggedBySeverity={results.flagged_by_severity} />
+        <InterviewerFlagChart nameFilter={itvFilter} />
       </div>
 
       {/* Main pipeline checks — grouped by severity */}

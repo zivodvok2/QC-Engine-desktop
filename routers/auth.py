@@ -1,6 +1,7 @@
 import os
+import secrets
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Optional, Union
 
 import bcrypt
 import jwt
@@ -12,6 +13,7 @@ import shared_db
 SECRET_KEY = os.environ.get("JWT_SECRET", "servallab-dev-secret-change-in-prod")
 ALGORITHM = "HS256"
 TOKEN_EXPIRE_HOURS = 24 * 7
+OTP_EXPIRE_MINUTES = 10
 
 
 class LoginRequest(BaseModel):
@@ -24,11 +26,23 @@ class UserOut(BaseModel):
     email: str
     name: str
     role: str
+    totp_enabled: bool = False
 
 
 class LoginResponse(BaseModel):
     token: str
     user: UserOut
+
+
+class OtpChallenge(BaseModel):
+    otp_required: bool = True
+    user_id: int
+    demo_otp: str
+
+
+class VerifyOtpRequest(BaseModel):
+    user_id: int
+    code: str
 
 
 class RegisterRequest(BaseModel):
@@ -76,18 +90,64 @@ def get_current_user(authorization: str = Header(default="")) -> dict:
     return user
 
 
-@router.post("/auth/login", response_model=LoginResponse)
+def _user_out(user: dict) -> UserOut:
+    return UserOut(
+        id=user["id"], email=user["email"], name=user["full_name"], role=user["role"],
+        totp_enabled=bool(user.get("totp_enabled")),
+    )
+
+
+@router.post("/auth/login", response_model=Union[LoginResponse, OtpChallenge])
 def login(req: LoginRequest):
     if not shared_db.db_available():
         raise HTTPException(status_code=503, detail="Auth database not available")
     user = shared_db.get_user_by_email(req.email.strip().lower())
     if not user or not _verify_password(req.password, user["password_hash"]):
         raise HTTPException(status_code=401, detail="Invalid email or password")
+
+    if user.get("totp_enabled"):
+        code = f"{secrets.randbelow(1_000_000):06d}"
+        otp_hash = bcrypt.hashpw(code.encode(), bcrypt.gensalt()).decode()
+        expires_at = (datetime.now(tz=timezone.utc) + timedelta(minutes=OTP_EXPIRE_MINUTES)).isoformat()
+        shared_db.set_user_otp(user["id"], otp_hash, expires_at)
+        # demo_otp is returned directly because this is a demo deployment with no email server —
+        # a real deployment would email the code instead of including it in the response.
+        return OtpChallenge(user_id=user["id"], demo_otp=code)
+
     token = _make_token(user["id"])
-    return LoginResponse(
-        token=token,
-        user=UserOut(id=user["id"], email=user["email"], name=user["full_name"], role=user["role"]),
-    )
+    return LoginResponse(token=token, user=_user_out(user))
+
+
+@router.post("/auth/verify-otp", response_model=LoginResponse)
+def verify_otp(req: VerifyOtpRequest):
+    if not shared_db.db_available():
+        raise HTTPException(status_code=503, detail="Auth database not available")
+    user = shared_db.get_user_by_id(req.user_id)
+    if not user or not user.get("otp_code"):
+        raise HTTPException(status_code=401, detail="No pending verification for this user")
+    expires_at = user.get("otp_expires_at")
+    if not expires_at or datetime.now(tz=timezone.utc) > datetime.fromisoformat(expires_at):
+        shared_db.clear_user_otp(user["id"])
+        raise HTTPException(status_code=401, detail="Code expired — please log in again")
+    if not bcrypt.checkpw(req.code.encode(), user["otp_code"].encode()):
+        raise HTTPException(status_code=401, detail="Invalid code")
+    shared_db.clear_user_otp(user["id"])
+    token = _make_token(user["id"])
+    return LoginResponse(token=token, user=_user_out(user))
+
+
+@router.post("/auth/enable-2fa", response_model=UserOut)
+def enable_2fa(user: dict = Depends(get_current_user)):
+    shared_db.set_2fa_enabled(user["id"], True)
+    user["totp_enabled"] = 1
+    return _user_out(user)
+
+
+@router.post("/auth/disable-2fa", response_model=UserOut)
+def disable_2fa(user: dict = Depends(get_current_user)):
+    shared_db.set_2fa_enabled(user["id"], False)
+    user["totp_enabled"] = 0
+    return _user_out(user)
 
 
 @router.post("/auth/register", response_model=LoginResponse)
@@ -104,12 +164,9 @@ def register(req: RegisterRequest):
         raise HTTPException(status_code=409, detail=err)
     user = shared_db.get_user_by_email(req.email.strip().lower())
     token = _make_token(user["id"])
-    return LoginResponse(
-        token=token,
-        user=UserOut(id=user["id"], email=user["email"], name=user["full_name"], role=user["role"]),
-    )
+    return LoginResponse(token=token, user=_user_out(user))
 
 
 @router.get("/auth/me", response_model=UserOut)
 def me(user: dict = Depends(get_current_user)):
-    return UserOut(id=user["id"], email=user["email"], name=user["full_name"], role=user["role"])
+    return _user_out(user)

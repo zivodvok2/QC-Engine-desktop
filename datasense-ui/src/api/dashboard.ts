@@ -96,6 +96,7 @@ export interface UploadLogEntry {
   uploader_name: string | null
   wave_label: string | null
   project_name?: string | null
+  is_locked: number
 }
 
 export interface ActivityEntry {

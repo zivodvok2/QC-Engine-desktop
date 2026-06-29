@@ -24,6 +24,7 @@ class SaveQCRequest(BaseModel):
     filename: str
     wave_label: Optional[str] = None
     job_id: Optional[str] = None
+    column_config: Optional[dict[str, str]] = None
 
 
 # Column map: uppercase source column → dashboard schema column
@@ -61,15 +62,21 @@ _COL_MAP = {
 }
 
 
-def _df_to_quality_records(df: pd.DataFrame) -> list:
+def _df_to_quality_records(df: pd.DataFrame, column_config: Optional[dict] = None) -> list:
     """Map any df_clean to quality_report_records-compatible dicts."""
     upper_cols = {str(c).strip().upper(): c for c in df.columns}
     std_dst = set(_COL_MAP.values())
     records = []
+    overrides = {dst: src for dst, src in (column_config or {}).items() if src in df.columns}
 
     for _, row in df.iterrows():
         rec: dict = {}
         mapped_orig: set = set()
+
+        for dst, src in overrides.items():
+            val = row[src]
+            rec[dst] = None if (isinstance(val, float) and pd.isna(val)) else val
+            mapped_orig.add(src)
 
         for src_upper, dst in _COL_MAP.items():
             if src_upper in upper_cols and dst not in rec:
@@ -107,7 +114,7 @@ def create_project(req: CreateProjectRequest, user: dict = Depends(get_current_u
         raise HTTPException(status_code=503, detail="Database not available")
     existing = shared_db.get_project_by_name(req.name.strip())
     if existing:
-        return existing
+        raise HTTPException(status_code=409, detail=f"A project named '{req.name.strip()}' already exists")
     project_id = shared_db.create_project(req.name.strip(), user["id"])
     return shared_db.get_project(project_id)
 
@@ -139,7 +146,7 @@ async def save_qc_results(
 
     def _load_map():
         df = DataCleaner().clean(DataLoader().load(str(file_path)))
-        return _df_to_quality_records(df)
+        return _df_to_quality_records(df, req.column_config)
 
     records = await loop.run_in_executor(None, _load_map)
 
@@ -178,6 +185,13 @@ async def save_qc_results(
     upload_id = shared_db.insert_quality_records(
         project_id, user["id"], req.filename, records, req.wave_label
     )
+    shared_db.lock_upload(upload_id)
+
+    if req.column_config:
+        try:
+            shared_db.update_project(project_id, column_config=json.dumps(req.column_config))
+        except Exception:
+            pass
 
     # Seed interviewer registry with any new codes found in this file
     known_codes = shared_db.get_interviewer_code_set()

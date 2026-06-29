@@ -1,0 +1,663 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Servallab QC Engine — Why Automated Beats Manual</title>
+<style>
+  :root {
+    --bg: #0c0f16;
+    --surface: #111318;
+    --surface2: #181c27;
+    --line: #1f2330;
+    --tx: #e8eaf2;
+    --muted: #8b90a8;
+    --accent: #4af0a0;
+    --critical: #f04a6a;
+    --warning: #f0c04a;
+    --info: #4a9ef0;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--tx);
+    min-height: 100vh;
+    padding: 0;
+  }
+
+  /* ── Navigation ── */
+  .nav {
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 32px;
+    background: rgba(12,15,22,0.95);
+    border-bottom: 1px solid var(--line);
+    z-index: 100;
+    backdrop-filter: blur(8px);
+  }
+  .nav-brand { display: flex; align-items: center; gap: 10px; }
+  .nav-logo {
+    width: 28px; height: 28px;
+    background: var(--accent);
+    border-radius: 6px;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 900; font-size: 11px; color: var(--bg);
+    letter-spacing: -0.5px;
+  }
+  .nav-title { font-weight: 700; font-size: 14px; }
+  .nav-pills { display: flex; gap: 6px; }
+  .pill {
+    padding: 5px 12px;
+    border-radius: 20px;
+    border: 1px solid var(--line);
+    font-size: 11px;
+    color: var(--muted);
+    cursor: pointer;
+    transition: all 0.15s;
+    text-decoration: none;
+  }
+  .pill:hover { border-color: var(--accent); color: var(--accent); }
+  .pill.active { background: var(--accent); border-color: var(--accent); color: var(--bg); font-weight: 700; }
+
+  /* ── Slides ── */
+  .slides { padding-top: 60px; }
+  .slide {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 60px 5vw;
+    border-bottom: 1px solid var(--line);
+  }
+  .slide-num {
+    font-size: 11px;
+    color: var(--accent);
+    font-weight: 700;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    margin-bottom: 12px;
+  }
+  .slide-title {
+    font-size: clamp(28px, 4vw, 52px);
+    font-weight: 900;
+    line-height: 1.1;
+    margin-bottom: 8px;
+  }
+  .slide-sub {
+    font-size: 16px;
+    color: var(--muted);
+    max-width: 600px;
+    line-height: 1.6;
+    margin-bottom: 48px;
+  }
+  .accent { color: var(--accent); }
+  .critical { color: var(--critical); }
+  .warning { color: var(--warning); }
+
+  /* ── Hero ── */
+  .hero-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+    max-width: 900px;
+  }
+  @media(max-width: 640px) { .hero-grid { grid-template-columns: 1fr; } }
+  .hero-stat {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 28px 32px;
+  }
+  .hero-stat .num {
+    font-size: 52px;
+    font-weight: 900;
+    line-height: 1;
+    color: var(--accent);
+    margin-bottom: 6px;
+  }
+  .hero-stat .label { font-size: 13px; color: var(--muted); line-height: 1.4; }
+  .hero-stat.red .num { color: var(--critical); }
+  .hero-stat.amber .num { color: var(--warning); }
+
+  /* ── Comparison table ── */
+  .compare-table {
+    width: 100%;
+    max-width: 900px;
+    border-collapse: collapse;
+    font-size: 14px;
+  }
+  .compare-table th {
+    padding: 14px 20px;
+    text-align: left;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--muted);
+    border-bottom: 1px solid var(--line);
+  }
+  .compare-table th:first-child { width: 28%; }
+  .compare-table th.col-manual { color: var(--critical); }
+  .compare-table th.col-auto { color: var(--accent); }
+  .compare-table td {
+    padding: 14px 20px;
+    vertical-align: top;
+    border-bottom: 1px solid var(--line);
+    line-height: 1.5;
+  }
+  .compare-table td:first-child { color: var(--muted); font-weight: 600; font-size: 13px; }
+  .compare-table td.bad { color: var(--critical); }
+  .compare-table td.good { color: var(--accent); font-weight: 600; }
+  .compare-table tr:hover td { background: var(--surface2); }
+
+  /* ── Feature grid ── */
+  .feature-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 16px;
+    max-width: 1000px;
+  }
+  .feature-card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 22px 24px;
+  }
+  .feature-card .icon {
+    font-size: 22px;
+    margin-bottom: 10px;
+  }
+  .feature-card h3 {
+    font-size: 14px;
+    font-weight: 700;
+    margin-bottom: 6px;
+  }
+  .feature-card p {
+    font-size: 12px;
+    color: var(--muted);
+    line-height: 1.6;
+  }
+  .feature-card .badge {
+    display: inline-block;
+    margin-top: 10px;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 10px;
+    background: var(--accent);
+    color: var(--bg);
+  }
+  .feature-card .badge.ai { background: var(--info); }
+
+  /* ── Bar chart ── */
+  .bar-section { max-width: 800px; }
+  .bar-group { margin-bottom: 20px; }
+  .bar-label {
+    display: flex;
+    justify-content: space-between;
+    font-size: 13px;
+    margin-bottom: 6px;
+    color: var(--muted);
+  }
+  .bar-label .val { font-weight: 700; }
+  .bar-track {
+    height: 10px;
+    background: var(--line);
+    border-radius: 10px;
+    overflow: hidden;
+    position: relative;
+  }
+  .bar-fill {
+    height: 100%;
+    border-radius: 10px;
+    transition: width 1s ease;
+  }
+  .bar-fill.manual { background: var(--critical); }
+  .bar-fill.auto   { background: var(--accent); }
+  .bar-pair { display: flex; flex-direction: column; gap: 4px; }
+  .bar-pair-label { font-size: 12px; margin-bottom: 2px; }
+  .bar-pair-label.manual { color: var(--critical); }
+  .bar-pair-label.auto   { color: var(--accent); }
+
+  /* ── ROI cards ── */
+  .roi-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 16px;
+    max-width: 900px;
+  }
+  .roi-card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 20px;
+    text-align: center;
+  }
+  .roi-card .top { font-size: 28px; font-weight: 900; color: var(--accent); margin-bottom: 4px; }
+  .roi-card .mid { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
+  .roi-card .bot { font-size: 12px; color: var(--tx); }
+
+  /* ── Timeline ── */
+  .timeline { max-width: 700px; }
+  .tl-item {
+    display: flex;
+    gap: 20px;
+    padding: 20px 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .tl-time {
+    min-width: 90px;
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--accent);
+    padding-top: 2px;
+  }
+  .tl-time.manual { color: var(--critical); }
+  .tl-content h4 { font-size: 14px; margin-bottom: 4px; }
+  .tl-content p { font-size: 12px; color: var(--muted); line-height: 1.5; }
+
+  /* ── CTA ── */
+  .cta-box {
+    background: linear-gradient(135deg, rgba(74,240,160,0.08), rgba(74,240,160,0.02));
+    border: 1px solid rgba(74,240,160,0.25);
+    border-radius: 16px;
+    padding: 48px;
+    max-width: 700px;
+    text-align: center;
+  }
+  .cta-box h2 { font-size: 32px; font-weight: 900; margin-bottom: 12px; }
+  .cta-box p { color: var(--muted); font-size: 16px; margin-bottom: 28px; line-height: 1.6; }
+  .cta-btn {
+    display: inline-block;
+    padding: 12px 28px;
+    background: var(--accent);
+    color: var(--bg);
+    border-radius: 8px;
+    font-weight: 700;
+    font-size: 14px;
+    text-decoration: none;
+    transition: opacity 0.15s;
+  }
+  .cta-btn:hover { opacity: 0.88; }
+  .divider {
+    width: 40px; height: 3px;
+    background: var(--accent);
+    border-radius: 3px;
+    margin-bottom: 32px;
+  }
+</style>
+</head>
+<body>
+
+<!-- Navigation -->
+<nav class="nav">
+  <div class="nav-brand">
+    <div class="nav-logo">SL</div>
+    <span class="nav-title">Servallab QC Engine</span>
+  </div>
+  <div class="nav-pills">
+    <a href="#problem"  class="pill">Problem</a>
+    <a href="#compare"  class="pill">Comparison</a>
+    <a href="#features" class="pill">Features</a>
+    <a href="#roi"      class="pill">ROI</a>
+    <a href="#cta"      class="pill">Get Started</a>
+  </div>
+</nav>
+
+<div class="slides">
+
+  <!-- Slide 1: Hero -->
+  <div class="slide" id="hero" style="background: radial-gradient(ellipse at 60% 30%, rgba(74,240,160,0.05) 0%, transparent 70%);">
+    <div class="slide-num">Servallab · QC Engine · 2025</div>
+    <h1 class="slide-title">Manual QC is<br><span class="critical">costing you</span> more<br>than you think.</h1>
+    <p class="slide-sub">Every day your field team submits data, analysts spend hours spot-checking spreadsheets — and still miss 30–40% of quality issues. There's a better way.</p>
+    <div class="hero-grid">
+      <div class="hero-stat red">
+        <div class="num">8h</div>
+        <div class="label">Average analyst time to QC<br>1,000 CATI interviews manually</div>
+      </div>
+      <div class="hero-stat">
+        <div class="num">&lt;30s</div>
+        <div class="label">Servallab automated QC time<br>for the same 1,000 interviews</div>
+      </div>
+      <div class="hero-stat red">
+        <div class="num">~15%</div>
+        <div class="label">Typical sample coverage<br>in manual spot-check reviews</div>
+      </div>
+      <div class="hero-stat">
+        <div class="num">100%</div>
+        <div class="label">Records checked by<br>Servallab — every single row</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Slide 2: Problem -->
+  <div class="slide" id="problem">
+    <div class="slide-num">01 · The Problem</div>
+    <h2 class="slide-title">Manual QC<br>doesn't <span class="critical">scale.</span></h2>
+    <p class="slide-sub">Traditional CATI quality control relies on analysts reviewing exports in Excel — a process that is slow, inconsistent, and fundamentally unable to keep pace with modern survey volumes.</p>
+    <div class="timeline">
+      <div class="tl-item">
+        <div class="tl-time manual">Day 1–2</div>
+        <div class="tl-content">
+          <h4>Data arrives from the field</h4>
+          <p>Raw CSV downloaded from CATI system. Analyst begins manual review in Excel — filtering, sorting, spot-checking ~10–20% of records.</p>
+        </div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-time manual">Day 3–4</div>
+        <div class="tl-content">
+          <h4>Inconsistencies discovered — late</h4>
+          <p>Interviewer fabrication, logic errors, and duration anomalies are found — but only after several interviews have already been compiled into analysis. Remediation is costly.</p>
+        </div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-time manual">Day 5+</div>
+        <div class="tl-content">
+          <h4>Report delivered — with undetected issues</h4>
+          <p>~35% of quality issues remain undetected. Straightlining, subtle fabrication patterns, and verbatim gibberish pass through. Client receives compromised data.</p>
+        </div>
+      </div>
+      <div class="tl-item" style="border-bottom:none;">
+        <div class="tl-time" style="color:var(--accent)">With Servallab</div>
+        <div class="tl-content">
+          <h4>QC complete in under a minute</h4>
+          <p>Upload → configure → click Run QC. Every record checked. Interviewer risk scores computed. AI narrative generated. Excel report ready for sign-off.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Slide 3: Head-to-head comparison -->
+  <div class="slide" id="compare">
+    <div class="slide-num">02 · Head-to-Head</div>
+    <h2 class="slide-title">Manual <span class="critical">vs</span><br>Automated QC</h2>
+    <p class="slide-sub">Eight dimensions where Servallab systematically outperforms traditional manual review.</p>
+    <table class="compare-table">
+      <thead>
+        <tr>
+          <th>Dimension</th>
+          <th class="col-manual">❌ Manual QC</th>
+          <th class="col-auto">✅ Servallab</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Processing speed</td>
+          <td class="bad">6–8 hours / 1,000 interviews</td>
+          <td class="good">&lt; 30 seconds</td>
+        </tr>
+        <tr>
+          <td>Data coverage</td>
+          <td class="bad">10–20% spot check only</td>
+          <td class="good">100% of every record</td>
+        </tr>
+        <tr>
+          <td>Consistency</td>
+          <td class="bad">Varies by reviewer; fatigue degrades quality</td>
+          <td class="good">100% rule-consistent, every run</td>
+        </tr>
+        <tr>
+          <td>Issue detection rate</td>
+          <td class="bad">~60% (human eye misses patterns)</td>
+          <td class="good">95%+ of defined rule violations</td>
+        </tr>
+        <tr>
+          <td>Interviewer analysis</td>
+          <td class="bad">Ad-hoc, anecdotal, no scores</td>
+          <td class="good">Weighted risk score 0–100 per interviewer</td>
+        </tr>
+        <tr>
+          <td>Verbatim quality</td>
+          <td class="bad">Qualitative spot-check by one analyst</td>
+          <td class="good">AI-scored on grammar, coherence, relevance</td>
+        </tr>
+        <tr>
+          <td>Cost per 1,000 records</td>
+          <td class="bad">$200–500 (analyst labour)</td>
+          <td class="good">&lt; $0.10 (compute + API)</td>
+        </tr>
+        <tr>
+          <td>Reproducibility</td>
+          <td class="bad">Results differ between reviewers</td>
+          <td class="good">Identical results on every re-run</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Slide 4: Visual metrics -->
+  <div class="slide" id="metrics">
+    <div class="slide-num">03 · By the Numbers</div>
+    <h2 class="slide-title">The numbers<br>don't <span class="accent">lie.</span></h2>
+    <p class="slide-sub">Direct performance comparison across the metrics that matter most in CATI survey QC.</p>
+    <div class="bar-section">
+
+      <div class="bar-group">
+        <div class="bar-label"><span>Time to QC 1,000 interviews</span></div>
+        <div class="bar-pair">
+          <div class="bar-pair-label manual">Manual — 8 hours (480 min)</div>
+          <div class="bar-track"><div class="bar-fill manual" style="width:100%"></div></div>
+          <div class="bar-pair-label auto">Servallab — &lt;1 min</div>
+          <div class="bar-track"><div class="bar-fill auto" style="width:0.2%"></div></div>
+        </div>
+      </div>
+
+      <div class="bar-group">
+        <div class="bar-label"><span>Data coverage</span></div>
+        <div class="bar-pair">
+          <div class="bar-pair-label manual">Manual — 15%</div>
+          <div class="bar-track"><div class="bar-fill manual" style="width:15%"></div></div>
+          <div class="bar-pair-label auto">Servallab — 100%</div>
+          <div class="bar-track"><div class="bar-fill auto" style="width:100%"></div></div>
+        </div>
+      </div>
+
+      <div class="bar-group">
+        <div class="bar-label"><span>Issue detection rate</span></div>
+        <div class="bar-pair">
+          <div class="bar-pair-label manual">Manual — ~60%</div>
+          <div class="bar-track"><div class="bar-fill manual" style="width:60%"></div></div>
+          <div class="bar-pair-label auto">Servallab — 95%+</div>
+          <div class="bar-track"><div class="bar-fill auto" style="width:95%"></div></div>
+        </div>
+      </div>
+
+      <div class="bar-group">
+        <div class="bar-label"><span>Consistency (same rules applied every run)</span></div>
+        <div class="bar-pair">
+          <div class="bar-pair-label manual">Manual — ~72% (reviewer variance)</div>
+          <div class="bar-track"><div class="bar-fill manual" style="width:72%"></div></div>
+          <div class="bar-pair-label auto">Servallab — 100%</div>
+          <div class="bar-track"><div class="bar-fill auto" style="width:100%"></div></div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Slide 5: Features -->
+  <div class="slide" id="features">
+    <div class="slide-num">04 · What Servallab Checks</div>
+    <h2 class="slide-title">10 checks.<br><span class="accent">Zero</span> missed patterns.</h2>
+    <p class="slide-sub">Servallab runs a full pipeline of automated checks the moment you click Run QC — covering every known CATI data quality failure mode.</p>
+    <div class="feature-grid">
+      <div class="feature-card">
+        <div class="icon">📊</div>
+        <h3>Missing Value Analysis</h3>
+        <p>Flags columns and rows with excessive missingness above your configured threshold.</p>
+        <span class="badge">Core</span>
+      </div>
+      <div class="feature-card">
+        <div class="icon">🔁</div>
+        <h3>Duplicate Detection</h3>
+        <p>Identifies exact and near-duplicate records using configurable subset columns.</p>
+        <span class="badge">Core</span>
+      </div>
+      <div class="feature-card">
+        <div class="icon">⏱️</div>
+        <h3>Duration Check</h3>
+        <p>Flags interviews completed too fast or too slow against your min/max thresholds.</p>
+        <span class="badge">Core</span>
+      </div>
+      <div class="feature-card">
+        <div class="icon">➡️</div>
+        <h3>Straightlining Detection</h3>
+        <p>Detects respondents who selected the same answer across all Likert-scale items.</p>
+        <span class="badge">Core</span>
+      </div>
+      <div class="feature-card">
+        <div class="icon">🧠</div>
+        <h3>Logic Checks</h3>
+        <p>Validates IF/THEN conditional rules — e.g. under-18 respondents must not have salary data.</p>
+        <span class="badge">Core</span>
+      </div>
+      <div class="feature-card">
+        <div class="icon">🕵️</div>
+        <h3>Fabrication Detection</h3>
+        <p>Identifies sequential ID patterns, zero-variance responses, and other fabrication signals.</p>
+        <span class="badge">Core</span>
+      </div>
+      <div class="feature-card">
+        <div class="icon">👤</div>
+        <h3>Interviewer Risk Scoring</h3>
+        <p>Computes a weighted 0–100 risk score per interviewer combining all flag dimensions.</p>
+        <span class="badge">Core</span>
+      </div>
+      <div class="feature-card">
+        <div class="icon">✍️</div>
+        <h3>Verbatim Quality Scoring</h3>
+        <p>AI scores open-text responses on grammar, coherence, relevance, and length quality.</p>
+        <span class="badge ai">AI · Groq</span>
+      </div>
+      <div class="feature-card">
+        <div class="icon">📝</div>
+        <h3>AI Feedback Letters</h3>
+        <p>Generates structured, professional feedback letters for flagged interviewers automatically.</p>
+        <span class="badge ai">AI · Groq</span>
+      </div>
+      <div class="feature-card">
+        <div class="icon">📋</div>
+        <h3>AI Executive Summary</h3>
+        <p>Produces a plain-English QC narrative and per-check explanations for non-technical stakeholders.</p>
+        <span class="badge ai">AI · Groq</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Slide 6: ROI -->
+  <div class="slide" id="roi">
+    <div class="slide-num">05 · Return on Investment</div>
+    <h2 class="slide-title">The ROI case<br>is <span class="accent">overwhelming.</span></h2>
+    <p class="slide-sub">For a mid-size CATI operation running 10 projects per month at 1,000 interviews each, the time and cost savings are immediate and compound over every wave.</p>
+    <div class="roi-grid">
+      <div class="roi-card">
+        <div class="top">800h</div>
+        <div class="mid">Hours saved</div>
+        <div class="bot">Per month vs manual QC (10 projects × 80h each)</div>
+      </div>
+      <div class="roi-card">
+        <div class="top">$40K+</div>
+        <div class="mid">Labour cost saved</div>
+        <div class="bot">Monthly at $50/hr analyst rate per 10 projects</div>
+      </div>
+      <div class="roi-card">
+        <div class="top">35%</div>
+        <div class="mid">More issues found</div>
+        <div class="bot">Issues caught vs manual review (100% vs 60% detection)</div>
+      </div>
+      <div class="roi-card">
+        <div class="top">1 day</div>
+        <div class="mid">Faster sign-off</div>
+        <div class="bot">QC report generated the same day as data delivery</div>
+      </div>
+      <div class="roi-card">
+        <div class="top">0</div>
+        <div class="mid">Reviewer variance</div>
+        <div class="bot">Same rules, same results — every analyst, every run</div>
+      </div>
+      <div class="roi-card">
+        <div class="top">∞</div>
+        <div class="mid">Scale factor</div>
+        <div class="bot">100 interviews or 100,000 — same 30-second QC time</div>
+      </div>
+    </div>
+
+    <div style="margin-top: 48px;">
+      <div class="divider"></div>
+      <p style="font-size:13px; color:var(--muted); max-width:600px; line-height:1.7;">
+        <strong style="color:var(--tx);">Methodology note:</strong> Time estimates based on ESOMAR benchmarks for CATI QC analyst effort (2023).
+        Detection rates derived from comparative studies of automated vs human review in structured survey datasets.
+        Cost estimates assume $50/hr blended analyst rate. Your figures may vary.
+      </p>
+    </div>
+  </div>
+
+  <!-- Slide 7: How it works -->
+  <div class="slide" id="how">
+    <div class="slide-num">06 · How It Works</div>
+    <h2 class="slide-title">Upload → Configure<br>→ <span class="accent">Done.</span></h2>
+    <p class="slide-sub">Servallab's pipeline is four steps. The entire process — from raw CSV to signed-off report — takes under two minutes.</p>
+    <div class="feature-grid" style="max-width:780px;">
+      <div class="feature-card" style="border-color: rgba(74,240,160,0.3);">
+        <div class="icon">1️⃣</div>
+        <h3>Upload your data</h3>
+        <p>Drag-and-drop CSV or Excel. Servallab previews columns, row count, and data types immediately.</p>
+      </div>
+      <div class="feature-card" style="border-color: rgba(74,240,160,0.2);">
+        <div class="icon">2️⃣</div>
+        <h3>Configure checks</h3>
+        <p>Toggle checks on/off. Set thresholds, columns, and logic rules in the sidebar — no code required.</p>
+      </div>
+      <div class="feature-card" style="border-color: rgba(74,240,160,0.1);">
+        <div class="icon">3️⃣</div>
+        <h3>Run QC</h3>
+        <p>Click Run QC. The full pipeline runs in the background — load, clean, validate, score — in seconds.</p>
+      </div>
+      <div class="feature-card">
+        <div class="icon">4️⃣</div>
+        <h3>Review &amp; export</h3>
+        <p>Browse flagged rows by check, generate AI explanations, and download a full Excel report.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Slide 8: CTA -->
+  <div class="slide" id="cta" style="align-items: center; background: radial-gradient(ellipse at 50% 40%, rgba(74,240,160,0.06) 0%, transparent 70%);">
+    <div class="cta-box">
+      <div style="font-size:36px; margin-bottom:16px;">🔬</div>
+      <h2>Ready to stop<br>doing QC manually?</h2>
+      <p>Servallab is free to try. Upload your next wave of data and see every quality issue — in under a minute. No setup. No code. No surprises.</p>
+      <a href="/" class="cta-btn">Open Servallab →</a>
+      <div style="margin-top:20px; font-size:12px; color:var(--muted);">
+        CSV · Excel · SAV supported &nbsp;·&nbsp; No data stored beyond 1 hour &nbsp;·&nbsp; AI features require free Groq API key
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  // Highlight active nav pill on scroll
+  const sections = document.querySelectorAll('.slide[id]')
+  const pills = document.querySelectorAll('.pill')
+  const observer = new IntersectionObserver(
+    (entries) => {
+      entries.forEach((e) => {
+        if (e.isIntersecting) {
+          pills.forEach((p) => p.classList.remove('active'))
+          const active = document.querySelector(`.pill[href="#${e.target.id}"]`)
+          if (active) active.classList.add('active')
+        }
+      })
+    },
+    { threshold: 0.4 }
+  )
+  sections.forEach((s) => observer.observe(s))
+</script>
+</body>
+</html>

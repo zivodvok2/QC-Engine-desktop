@@ -30,8 +30,9 @@ const PRE_FILE_TABS = new Set(['Config', 'Demos'])
 
 export function Header({ onSettings }: Props) {
   const { activeTab, setActiveTab, jobStatus, jobProgress, fileId, authUser, openLogin, logoutUser, dashboardMode, setDashboardMode, setDashboardProject } = useAppStore()
-  const visibleTabs = fileId ? TABS : TABS.filter(t => PRE_FILE_TABS.has(t.label))
-
+  const visibleTabs = dashboardMode
+    ? TABS.filter(t => PRE_FILE_TABS.has(t.label))
+    : (fileId ? TABS : TABS.filter(t => PRE_FILE_TABS.has(t.label)))
   return (
     <header className="bg-surface border-b border-line shrink-0">
       {/* Progress bar */}
@@ -110,7 +111,7 @@ export function Header({ onSettings }: Props) {
             </div>
           ) : (
             <button
-              onClick={openLogin}
+              onClick={() => openLogin()}
               className="flex items-center gap-1 text-xs text-muted hover:text-tx transition-colors px-2 py-1 rounded hover:bg-surface2"
               title="Sign in"
             >

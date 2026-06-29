@@ -488,6 +488,8 @@ def delete_upload(
 ):
     _require_db()
     _require_admin(user)
+    if shared_db.is_upload_locked(upload_id):
+        raise HTTPException(status_code=403, detail="This upload is locked and cannot be deleted")
     shared_db.delete_upload(upload_id, report_type)
     return {"status": "ok"}
 
@@ -540,6 +542,9 @@ def toggle_active(user_id: int, body: ToggleActiveBody, user: dict = Depends(get
 def create_project_full(body: CreateProjectFullBody, user: dict = Depends(get_current_user)):
     _require_db()
     _require_admin(user)
+    existing = shared_db.get_project_by_name(body.name.strip())
+    if existing:
+        raise HTTPException(status_code=409, detail=f"A project named '{body.name.strip()}' already exists")
     project_id = shared_db.create_project_full(
         name=body.name,
         client=body.client,

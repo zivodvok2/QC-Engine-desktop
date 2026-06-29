@@ -1,0 +1,228 @@
+diff --git a/core/cleaner.py b/core/cleaner.py
+index eb4fd31..ffc4fd3 100644
+--- a/core/cleaner.py
++++ b/core/cleaner.py
+@@ -2,11 +2,26 @@
+ cleaner.py - Data normalization and type coercion
+ """
+ 
++import re
++
+ import pandas as pd
+ from core.utils import setup_logger
+ 
+ logger = setup_logger("cleaner")
+ 
++# Header aliases for interviewer/enumerator ID columns (mirrors routers/projects.py's
++# _COL_MAP), normalized to letters+digits only. Title-casing these would mangle codes
++# like "NB01" into "Nb01".
++_INTERVIEWER_ID_ALIASES = {
++    "INTERVIEWERID", "INTERVIEWERCODE", "INTCODE",
++    "ENUMERATORID", "ENUMERATORCODE", "FIELDWORKERID",
++}
++
++
++def _is_interviewer_id_column(col) -> bool:
++    normalized = re.sub(r"[^A-Z0-9]", "", str(col).upper())
++    return normalized in _INTERVIEWER_ID_ALIASES
++
+ 
+ class DataCleaner:
+     """
+@@ -68,6 +83,8 @@ class DataCleaner:
+     def _normalize_categories(self, df: pd.DataFrame) -> pd.DataFrame:
+         """Title-case string columns with low cardinality (likely categories)."""
+         for col in df.select_dtypes(include="object").columns:
++            if _is_interviewer_id_column(col):
++                continue
+             try:
+                 if df[col].nunique() <= 30:
+                     df[col] = df[col].apply(lambda x: x.title() if isinstance(x, str) else x)
+diff --git a/datasense-ui/src/components/dashboard/ProjectDetail.tsx b/datasense-ui/src/components/dashboard/ProjectDetail.tsx
+index dc1238b..d35d9ae 100644
+--- a/datasense-ui/src/components/dashboard/ProjectDetail.tsx
++++ b/datasense-ui/src/components/dashboard/ProjectDetail.tsx
+@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query'
+ import { Loader2 } from 'lucide-react'
+ import { useAppStore } from '../../store/appStore'
+ import { getDashboardSummary, type ProjectSummary } from '../../api/dashboard'
++import { DataTab } from './tabs/DataTab'
+ import { QualityReportTab } from './tabs/QualityReportTab'
+ import { BackcheckTab } from './tabs/BackcheckTab'
+ import { ListenInTab } from './tabs/ListenInTab'
+@@ -12,9 +13,9 @@ import { CancelledTab } from './tabs/CancelledTab'
+ import { AdminTab } from './tabs/AdminTab'
+ import { CombinedReportTab } from './tabs/CombinedReportTab'
+ 
+-type SubTab = 'quality' | 'backcheck' | 'listenin' | 'performance' | 'timing' | 'cancelled' | 'combined' | 'admin'
++type SubTab = 'data' | 'quality' | 'backcheck' | 'listenin' | 'performance' | 'timing' | 'cancelled' | 'combined' | 'admin'
+ 
+-const ADMIN_ROLES = new Set(['qc_executive', 'operations_manager'])
++export const ADMIN_ROLES = new Set(['qc_executive', 'operations_manager'])
+ 
+ interface Props { id: number }
+ 
+@@ -34,6 +35,7 @@ export function ProjectDetail({ id }: Props) {
+   const isAdmin = authUser && ADMIN_ROLES.has(authUser.role)
+ 
+   const tabs: { key: SubTab; label: string }[] = [
++    { key: 'data',         label: 'Data' },
+     { key: 'quality',      label: 'Quality Report' },
+     { key: 'backcheck',    label: 'Back-check' },
+     { key: 'listenin',     label: 'Listen-in' },
+@@ -140,6 +142,7 @@ export function ProjectDetail({ id }: Props) {
+       </div>
+ 
+       {/* Tab content */}
++      {subTab === 'data'         && <DataTab projectId={id} onViewResults={() => setSubTab('quality')} />}
+       {subTab === 'quality'      && <QualityReportTab projectId={id} />}
+       {subTab === 'backcheck'    && <BackcheckTab projectId={id} target={project.backcheck_target} />}
+       {subTab === 'listenin'     && <ListenInTab projectId={id} target={project.listenin_target} />}
+diff --git a/datasense-ui/src/components/dashboard/tabs/DataTab.tsx b/datasense-ui/src/components/dashboard/tabs/DataTab.tsx
+new file mode 100644
+index 0000000..cf4731a
+--- /dev/null
++++ b/datasense-ui/src/components/dashboard/tabs/DataTab.tsx
+@@ -0,0 +1,142 @@
++import React, { useEffect, useRef, useState } from 'react'
++import { useMutation, useQueryClient } from '@tanstack/react-query'
++import { Loader2, Play, CheckCircle2, ArrowRight, RotateCcw, AlertCircle } from 'lucide-react'
++import { useAppStore } from '../../../store/appStore'
++import { useQCRun } from '../../../hooks/useQCRun'
++import { FileUpload } from '../../upload/FileUpload'
++import { saveQCResults } from '../../../api/projects'
++
++const UPLOAD_ROLES = new Set(['qc_executive', 'operations_manager', 'qc_officer'])
++
++interface Props {
++  projectId: number
++  onViewResults?: () => void
++}
++
++export function DataTab({ projectId, onViewResults }: Props) {
++  const { authUser, authToken, fileId, filename, jobId, jobStatus, jobProgress, jobError, results, clearFile } = useAppStore()
++  const token = authToken ?? ''
++  const qc = useQueryClient()
++  const { run, isRunning } = useQCRun()
++
++  const [savedJobId, setSavedJobId] = useState<string | null>(null)
++  const savingRef = useRef(false)
++
++  const canUpload = authUser && UPLOAD_ROLES.has(authUser.role)
++
++  const saveMut = useMutation({
++    mutationFn: () => {
++      if (!fileId || !filename) throw new Error('No file loaded')
++      return saveQCResults(projectId, fileId, filename, token, undefined, jobId ?? undefined)
++    },
++    onSuccess: () => {
++      qc.invalidateQueries({ queryKey: ['dash-quality', projectId] })
++      qc.invalidateQueries({ queryKey: ['dash-upload-log', projectId] })
++      qc.invalidateQueries({ queryKey: ['dash-summary'] })
++      setSavedJobId(jobId)
++    },
++    onSettled: () => {
++      savingRef.current = false
++    },
++  })
++
++  // Auto-save the moment a run completes — no manual "Save" click needed.
++  useEffect(() => {
++    if (jobStatus !== 'complete' || !jobId || !fileId) return
++    if (jobId === savedJobId || savingRef.current) return
++    savingRef.current = true
++    saveMut.mutate()
++  }, [jobStatus, jobId, fileId])
++
++  if (!canUpload) {
++    return (
++      <div className="card p-8 text-center text-muted text-sm">
++        You don't have permission to upload data for this project.
++      </div>
++    )
++  }
++
++  const justSaved = jobStatus === 'complete' && jobId === savedJobId
++
++  return (
++    <div className="space-y-4">
++      {!fileId && <FileUpload />}
++
++      {fileId && jobStatus === 'idle' && (
++        <div className="card p-4 flex items-center justify-between gap-3">
++          <div className="text-sm text-tx truncate">{filename}</div>
++          <button onClick={run} className="btn-primary flex items-center gap-2 shrink-0">
++            <Play size={14} /> Run Checks
++          </button>
++        </div>
++      )}
++
++      {(isRunning || jobStatus === 'queued' || jobStatus === 'running') && (
++        <div className="card p-4 space-y-2">
++          <div className="flex items-center gap-2 text-sm text-tx">
++            <Loader2 size={14} className="animate-spin text-accent" />
++            {jobStatus === 'queued' ? 'Queued…' : `Running checks… ${jobProgress}%`}
++          </div>
++          <div className="w-full bg-line rounded-full h-1.5">
++            <div className="bg-accent h-1.5 rounded-full transition-all" style={{ width: `${jobProgress || 10}%` }} />
++          </div>
++        </div>
++      )}
++
++      {jobStatus === 'failed' && (
++        <div className="card p-4 flex items-center gap-2 text-sm text-critical">
++          <AlertCircle size={14} />
++          {jobError ?? 'QC run failed.'}
++        </div>
++      )}
++
++      {jobStatus === 'complete' && results && (
++        <div className="card p-4 space-y-3">
++          <div className="flex items-center gap-2 text-sm text-tx">
++            {saveMut.isPending ? (
++              <>
++                <Loader2 size={14} className="animate-spin text-accent" /> Saving results to project…
++              </>
++            ) : justSaved ? (
++              <>
++                <CheckCircle2 size={14} className="text-accent" /> Saved to project
++              </>
++            ) : saveMut.isError ? (
++              <>
++                <AlertCircle size={14} className="text-critical" /> {String(saveMut.error)}
++              </>
++            ) : null}
++          </div>
++
++          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
++            <div className="card2 p-3 text-center">
++              <p className="label mb-0.5">Total Flags</p>
++              <p className="text-lg font-bold font-display text-tx">{results.total_flags}</p>
++            </div>
++            {Object.entries(results.flagged_by_severity).map(([sev, count]) => (
++              <div key={sev} className="card2 p-3 text-center">
++                <p className="label mb-0.5 capitalize">{sev}</p>
++                <p className={`text-lg font-bold font-display ${
++                  sev === 'critical' ? 'text-critical' : sev === 'warning' ? 'text-warning' : 'text-muted'
++                }`}>
++                  {count}
++                </p>
++              </div>
++            ))}
++          </div>
++
++          <div className="flex flex-wrap gap-2">
++            <button onClick={clearFile} className="btn-ghost flex items-center gap-1.5 text-xs">
++              <RotateCcw size={12} /> Upload another file
++            </button>
++            {onViewResults && (
++              <button onClick={onViewResults} className="btn-ghost flex items-center gap-1.5 text-xs">
++                View in Quality Report tab <ArrowRight size={12} />
++              </button>
++            )}
++          </div>
++        </div>
++      )}
++    </div>
++  )
++}

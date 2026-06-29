@@ -17,7 +17,10 @@ from typing import List, Optional
 
 import pandas as pd
 from openpyxl import Workbook, load_workbook
-from openpyxl.chart import BarChart, Reference
+from openpyxl.chart import BarChart, PieChart, Reference
+from openpyxl.chart.marker import DataPoint
+from openpyxl.chart.shapes import GraphicalProperties
+from openpyxl.formatting.rule import ColorScaleRule, DataBarRule
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
@@ -326,6 +329,37 @@ class Reporter:
             chart.set_categories(cats_ref)
             ws.add_chart(chart, "H5")
 
+        # ── Severity breakdown pie chart ─────────────────────────────────────
+        sev_counts = {
+            "Critical": sum(r2.flag_count for r2 in results if r2.severity == "critical"),
+            "Warning":  sum(r2.flag_count for r2 in results if r2.severity == "warning"),
+            "Info":     sum(r2.flag_count for r2 in results if r2.severity == "info"),
+        }
+        if sum(sev_counts.values()) > 0:
+            _cell(ws, 5, 11, "Severity", bold=True, color=WHITE, fill=FILL_NAVY)
+            _cell(ws, 5, 12, "Count", bold=True, color=WHITE, fill=FILL_NAVY)
+            sev_keys = ["critical", "warning", "info"]
+            for i, (label, key) in enumerate(zip(sev_counts.keys(), sev_keys), start=6):
+                _cell(ws, i, 11, label, color=SEV_COLOR[key])
+                _cell(ws, i, 12, sev_counts[label])
+
+            pie = PieChart()
+            pie.title = "Flags by Severity"
+            pie.height = 9
+            pie.width = 14
+            data_ref = Reference(ws, min_col=12, max_col=12, min_row=5, max_row=8)
+            cats_ref = Reference(ws, min_col=11, min_row=6, max_row=8)
+            pie.add_data(data_ref, titles_from_data=True)
+            pie.set_categories(cats_ref)
+            pie.series[0].data_points = [
+                DataPoint(idx=i, spPr=GraphicalProperties(solidFill=SEV_COLOR[key]))
+                for i, key in enumerate(sev_keys)
+            ]
+            ws.add_chart(pie, "H32")
+
+        _freeze(ws, row=5)
+        ws.auto_filter.ref = f"B{checks_table_start + 1}:F{chart_data_end}"
+
     # ── 2. ALL RECORDS ────────────────────────────────────────────────────────
 
     def _write_all_records(self, wb, results, df):
@@ -380,6 +414,7 @@ class Reporter:
 
         _auto_width(ws)
         _freeze(ws, row=2)
+        ws.auto_filter.ref = ws.dimensions
 
     # ── 3. FLAGGED RECORDS ────────────────────────────────────────────────────
 
@@ -414,6 +449,7 @@ class Reporter:
 
         _auto_width(ws)
         _freeze(ws, row=2)
+        ws.auto_filter.ref = ws.dimensions
 
     # ── 4. Per-check sheets ───────────────────────────────────────────────────
 
@@ -514,6 +550,7 @@ class Reporter:
         cols = list(perf.columns)
 
         _table_header(ws, 1, 1, cols)
+        last_row = 1
         for row_i, (_, rec) in enumerate(perf.iterrows(), start=2):
             rate = float(rec.get("flag_rate_%", 0) or 0)
             if rate >= 30:
@@ -524,9 +561,17 @@ class Reporter:
                 row_fill = FILL_ALT if row_i % 2 == 0 else None
             for ci, col in enumerate(cols, start=1):
                 _cell(ws, row_i, ci, rec.get(col), fill=row_fill, border=True)
+            last_row = row_i
 
         _auto_width(ws)
         _freeze(ws, row=2)
+        ws.auto_filter.ref = ws.dimensions
+        if "flag_rate_%" in cols and last_row > 1:
+            rate_col = get_column_letter(cols.index("flag_rate_%") + 1)
+            ws.conditional_formatting.add(
+                f"{rate_col}2:{rate_col}{last_row}",
+                DataBarRule(start_type="min", end_type="max", color=RED),
+            )
 
     # ── 6. PRODUCTIVITY ───────────────────────────────────────────────────────
 
@@ -578,6 +623,7 @@ class Reporter:
 
         _auto_width(ws, max_w=20)
         _freeze(ws, row=2)
+        ws.auto_filter.ref = f"A1:{get_column_letter(len(interviewers) + 2)}{last_row}"
 
     # ── 7. RISK SCORECARD ─────────────────────────────────────────────────────
 
@@ -658,6 +704,7 @@ class Reporter:
         headers = [c.replace("_", " ").title() for c in display_cols]
         _table_header(ws, 5, 1, headers)
 
+        last_row = 5
         for row_i, (_, rec) in enumerate(perf.iterrows(), start=6):
             score = float(rec.get("risk_score", 0) or 0)
             if score >= 30:
@@ -671,9 +718,18 @@ class Reporter:
                 _cell(ws, row_i, ci, rec.get(col),
                       fill=row_fill, border=True,
                       align="center" if ci > 1 else "left")
+            last_row = row_i
 
         _auto_width(ws)
         _freeze(ws, row=6)
+        if last_row > 5:
+            ws.auto_filter.ref = f"A5:{get_column_letter(len(display_cols))}{last_row}"
+            if "risk_score" in display_cols:
+                score_col = get_column_letter(display_cols.index("risk_score") + 1)
+                ws.conditional_formatting.add(
+                    f"{score_col}6:{score_col}{last_row}",
+                    DataBarRule(start_type="min", end_type="max", color=RED),
+                )
 
     # ── Utilities ─────────────────────────────────────────────────────────────
 

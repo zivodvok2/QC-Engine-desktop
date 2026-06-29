@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Loader2 } from 'lucide-react'
 import { useAppStore } from '../../store/appStore'
 import { getDashboardSummary, type ProjectSummary } from '../../api/dashboard'
+import { DataTab } from './tabs/DataTab'
 import { QualityReportTab } from './tabs/QualityReportTab'
 import { BackcheckTab } from './tabs/BackcheckTab'
 import { ListenInTab } from './tabs/ListenInTab'
@@ -12,9 +13,9 @@ import { CancelledTab } from './tabs/CancelledTab'
 import { AdminTab } from './tabs/AdminTab'
 import { CombinedReportTab } from './tabs/CombinedReportTab'
 
-type SubTab = 'quality' | 'backcheck' | 'listenin' | 'performance' | 'timing' | 'cancelled' | 'combined' | 'admin'
+type SubTab = 'data' | 'quality' | 'backcheck' | 'listenin' | 'performance' | 'timing' | 'cancelled' | 'combined' | 'admin'
 
-const ADMIN_ROLES = new Set(['qc_executive', 'operations_manager'])
+export const ADMIN_ROLES = new Set(['qc_executive', 'operations_manager'])
 
 interface Props { id: number }
 
@@ -34,6 +35,7 @@ export function ProjectDetail({ id }: Props) {
   const isAdmin = authUser && ADMIN_ROLES.has(authUser.role)
 
   const tabs: { key: SubTab; label: string }[] = [
+    { key: 'data',         label: 'Data' },
     { key: 'quality',      label: 'Quality Report' },
     { key: 'backcheck',    label: 'Back-check' },
     { key: 'listenin',     label: 'Listen-in' },
@@ -140,6 +142,7 @@ export function ProjectDetail({ id }: Props) {
       </div>
 
       {/* Tab content */}
+      {subTab === 'data'         && <DataTab projectId={id} onViewResults={() => setSubTab('quality')} />}
       {subTab === 'quality'      && <QualityReportTab projectId={id} />}
       {subTab === 'backcheck'    && <BackcheckTab projectId={id} target={project.backcheck_target} />}
       {subTab === 'listenin'     && <ListenInTab projectId={id} target={project.listenin_target} />}

@@ -2,10 +2,25 @@
 cleaner.py - Data normalization and type coercion
 """
 
+import re
+
 import pandas as pd
 from core.utils import setup_logger
 
 logger = setup_logger("cleaner")
+
+# Header aliases for interviewer/enumerator ID columns (mirrors routers/projects.py's
+# _COL_MAP), normalized to letters+digits only. Title-casing these would mangle codes
+# like "NB01" into "Nb01".
+_INTERVIEWER_ID_ALIASES = {
+    "INTERVIEWERID", "INTERVIEWERCODE", "INTCODE",
+    "ENUMERATORID", "ENUMERATORCODE", "FIELDWORKERID",
+}
+
+
+def _is_interviewer_id_column(col) -> bool:
+    normalized = re.sub(r"[^A-Z0-9]", "", str(col).upper())
+    return normalized in _INTERVIEWER_ID_ALIASES
 
 
 class DataCleaner:
@@ -68,6 +83,8 @@ class DataCleaner:
     def _normalize_categories(self, df: pd.DataFrame) -> pd.DataFrame:
         """Title-case string columns with low cardinality (likely categories)."""
         for col in df.select_dtypes(include="object").columns:
+            if _is_interviewer_id_column(col):
+                continue
             try:
                 if df[col].nunique() <= 30:
                     df[col] = df[col].apply(lambda x: x.title() if isinstance(x, str) else x)

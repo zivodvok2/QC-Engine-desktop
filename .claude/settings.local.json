@@ -70,7 +70,8 @@
       "Bash(DISPLAY=:0 chromium-browser --headless --screenshot=/tmp/servalab_main.png --window-size=1440,900 http://localhost:5173)",
       "Bash(VITE_API_URL=http://localhost:8000 python3 -m uvicorn api:app --port 8000 --reload)",
       "Bash(sqlite3 *)",
-      "Bash(echo \"API PID: $!\")"
+      "Bash(echo \"API PID: $!\")",
+      "Bash(grep -E \"\\\\.\\(sql|py\\)$\")"
     ]
   }
 }

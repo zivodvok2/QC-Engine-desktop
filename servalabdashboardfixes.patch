@@ -1,0 +1,2166 @@
+diff --git a/core/cleaner.py b/core/cleaner.py
+index eb4fd31..ffc4fd3 100644
+--- a/core/cleaner.py
++++ b/core/cleaner.py
+@@ -2,11 +2,26 @@
+ cleaner.py - Data normalization and type coercion
+ """
+ 
++import re
++
+ import pandas as pd
+ from core.utils import setup_logger
+ 
+ logger = setup_logger("cleaner")
+ 
++# Header aliases for interviewer/enumerator ID columns (mirrors routers/projects.py's
++# _COL_MAP), normalized to letters+digits only. Title-casing these would mangle codes
++# like "NB01" into "Nb01".
++_INTERVIEWER_ID_ALIASES = {
++    "INTERVIEWERID", "INTERVIEWERCODE", "INTCODE",
++    "ENUMERATORID", "ENUMERATORCODE", "FIELDWORKERID",
++}
++
++
++def _is_interviewer_id_column(col) -> bool:
++    normalized = re.sub(r"[^A-Z0-9]", "", str(col).upper())
++    return normalized in _INTERVIEWER_ID_ALIASES
++
+ 
+ class DataCleaner:
+     """
+@@ -68,6 +83,8 @@ class DataCleaner:
+     def _normalize_categories(self, df: pd.DataFrame) -> pd.DataFrame:
+         """Title-case string columns with low cardinality (likely categories)."""
+         for col in df.select_dtypes(include="object").columns:
++            if _is_interviewer_id_column(col):
++                continue
+             try:
+                 if df[col].nunique() <= 30:
+                     df[col] = df[col].apply(lambda x: x.title() if isinstance(x, str) else x)
+diff --git a/core/reporter.py b/core/reporter.py
+index 225db7c..4db0971 100644
+--- a/core/reporter.py
++++ b/core/reporter.py
+@@ -17,7 +17,10 @@ from typing import List, Optional
+ 
+ import pandas as pd
+ from openpyxl import Workbook, load_workbook
+-from openpyxl.chart import BarChart, Reference
++from openpyxl.chart import BarChart, PieChart, Reference
++from openpyxl.chart.marker import DataPoint
++from openpyxl.chart.shapes import GraphicalProperties
++from openpyxl.formatting.rule import ColorScaleRule, DataBarRule
+ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+ from openpyxl.utils import get_column_letter
+ 
+@@ -326,6 +329,37 @@ class Reporter:
+             chart.set_categories(cats_ref)
+             ws.add_chart(chart, "H5")
+ 
++        # ── Severity breakdown pie chart ─────────────────────────────────────
++        sev_counts = {
++            "Critical": sum(r2.flag_count for r2 in results if r2.severity == "critical"),
++            "Warning":  sum(r2.flag_count for r2 in results if r2.severity == "warning"),
++            "Info":     sum(r2.flag_count for r2 in results if r2.severity == "info"),
++        }
++        if sum(sev_counts.values()) > 0:
++            _cell(ws, 5, 11, "Severity", bold=True, color=WHITE, fill=FILL_NAVY)
++            _cell(ws, 5, 12, "Count", bold=True, color=WHITE, fill=FILL_NAVY)
++            sev_keys = ["critical", "warning", "info"]
++            for i, (label, key) in enumerate(zip(sev_counts.keys(), sev_keys), start=6):
++                _cell(ws, i, 11, label, color=SEV_COLOR[key])
++                _cell(ws, i, 12, sev_counts[label])
++
++            pie = PieChart()
++            pie.title = "Flags by Severity"
++            pie.height = 9
++            pie.width = 14
++            data_ref = Reference(ws, min_col=12, max_col=12, min_row=5, max_row=8)
++            cats_ref = Reference(ws, min_col=11, min_row=6, max_row=8)
++            pie.add_data(data_ref, titles_from_data=True)
++            pie.set_categories(cats_ref)
++            pie.series[0].data_points = [
++                DataPoint(idx=i, spPr=GraphicalProperties(solidFill=SEV_COLOR[key]))
++                for i, key in enumerate(sev_keys)
++            ]
++            ws.add_chart(pie, "H32")
++
++        _freeze(ws, row=5)
++        ws.auto_filter.ref = f"B{checks_table_start + 1}:F{chart_data_end}"
++
+     # ── 2. ALL RECORDS ────────────────────────────────────────────────────────
+ 
+     def _write_all_records(self, wb, results, df):
+@@ -380,6 +414,7 @@ class Reporter:
+ 
+         _auto_width(ws)
+         _freeze(ws, row=2)
++        ws.auto_filter.ref = ws.dimensions
+ 
+     # ── 3. FLAGGED RECORDS ────────────────────────────────────────────────────
+ 
+@@ -414,6 +449,7 @@ class Reporter:
+ 
+         _auto_width(ws)
+         _freeze(ws, row=2)
++        ws.auto_filter.ref = ws.dimensions
+ 
+     # ── 4. Per-check sheets ───────────────────────────────────────────────────
+ 
+@@ -514,6 +550,7 @@ class Reporter:
+         cols = list(perf.columns)
+ 
+         _table_header(ws, 1, 1, cols)
++        last_row = 1
+         for row_i, (_, rec) in enumerate(perf.iterrows(), start=2):
+             rate = float(rec.get("flag_rate_%", 0) or 0)
+             if rate >= 30:
+@@ -524,9 +561,17 @@ class Reporter:
+                 row_fill = FILL_ALT if row_i % 2 == 0 else None
+             for ci, col in enumerate(cols, start=1):
+                 _cell(ws, row_i, ci, rec.get(col), fill=row_fill, border=True)
++            last_row = row_i
+ 
+         _auto_width(ws)
+         _freeze(ws, row=2)
++        ws.auto_filter.ref = ws.dimensions
++        if "flag_rate_%" in cols and last_row > 1:
++            rate_col = get_column_letter(cols.index("flag_rate_%") + 1)
++            ws.conditional_formatting.add(
++                f"{rate_col}2:{rate_col}{last_row}",
++                DataBarRule(start_type="min", end_type="max", color=RED),
++            )
+ 
+     # ── 6. PRODUCTIVITY ───────────────────────────────────────────────────────
+ 
+@@ -578,6 +623,7 @@ class Reporter:
+ 
+         _auto_width(ws, max_w=20)
+         _freeze(ws, row=2)
++        ws.auto_filter.ref = f"A1:{get_column_letter(len(interviewers) + 2)}{last_row}"
+ 
+     # ── 7. RISK SCORECARD ─────────────────────────────────────────────────────
+ 
+@@ -658,6 +704,7 @@ class Reporter:
+         headers = [c.replace("_", " ").title() for c in display_cols]
+         _table_header(ws, 5, 1, headers)
+ 
++        last_row = 5
+         for row_i, (_, rec) in enumerate(perf.iterrows(), start=6):
+             score = float(rec.get("risk_score", 0) or 0)
+             if score >= 30:
+@@ -671,9 +718,18 @@ class Reporter:
+                 _cell(ws, row_i, ci, rec.get(col),
+                       fill=row_fill, border=True,
+                       align="center" if ci > 1 else "left")
++            last_row = row_i
+ 
+         _auto_width(ws)
+         _freeze(ws, row=6)
++        if last_row > 5:
++            ws.auto_filter.ref = f"A5:{get_column_letter(len(display_cols))}{last_row}"
++            if "risk_score" in display_cols:
++                score_col = get_column_letter(display_cols.index("risk_score") + 1)
++                ws.conditional_formatting.add(
++                    f"{score_col}6:{score_col}{last_row}",
++                    DataBarRule(start_type="min", end_type="max", color=RED),
++                )
+ 
+     # ── Utilities ─────────────────────────────────────────────────────────────
+ 
+diff --git a/datasense-ui/src/App.tsx b/datasense-ui/src/App.tsx
+index a812a8e..44d2013 100644
+--- a/datasense-ui/src/App.tsx
++++ b/datasense-ui/src/App.tsx
+@@ -22,7 +22,7 @@ import { OnboardingTooltip } from './components/onboarding/OnboardingTooltip'
+ import { SettingsPanel } from './components/settings/SettingsPanel'
+ import { LoginModal } from './components/auth/LoginModal'
+ import { Dashboard } from './components/dashboard/Dashboard'
+-import { useAppStore } from './store/appStore'
++import { useAppStore, IS_DASHBOARD_DOMAIN } from './store/appStore'
+ 
+ const qc = new QueryClient({
+   defaultOptions: { queries: { retry: 1, refetchOnWindowFocus: false } },
+@@ -161,11 +161,6 @@ function TabContent() {
+   )
+ }
+ 
+-const IS_DASHBOARD_DOMAIN = typeof window !== 'undefined' && (
+-  window.location.hostname.includes('dashboard.') ||
+-  new URLSearchParams(window.location.search).get('mode') === 'dashboard'
+-)
+-
+ function AppShell() {
+   const { fileId, activeTab, demosOpen, settingsOpen, loginOpen, openSettings, closeSettings, dashboardMode, setDashboardMode } = useAppStore()
+ 
+@@ -176,13 +171,10 @@ function AppShell() {
+   return (
+     <div className="flex h-full">
+       {dashboardMode ? (
+-        <>
+-          <div className="flex-1 flex flex-col overflow-hidden">
+-            <Header onSettings={openSettings} />
+-            <Dashboard />
+-          </div>
+-          {loginOpen && <LoginModal />}
+-        </>
++        <div className="flex-1 flex flex-col overflow-hidden">
++          <Header onSettings={openSettings} />
++          <Dashboard />
++        </div>
+       ) : (
+         <>
+           <Sidebar />
+@@ -196,11 +188,11 @@ function AppShell() {
+               </main>
+             )}
+           </div>
+-          {settingsOpen && <SettingsPanel onClose={closeSettings} />}
+           {demosOpen && !fileId && <DemosModal />}
+-          {loginOpen && <LoginModal />}
+         </>
+       )}
++      {settingsOpen && <SettingsPanel onClose={closeSettings} />}
++      {loginOpen && <LoginModal />}
+     </div>
+   )
+ }
+diff --git a/datasense-ui/src/api/auth.ts b/datasense-ui/src/api/auth.ts
+index 6484d25..dd6a854 100644
+--- a/datasense-ui/src/api/auth.ts
++++ b/datasense-ui/src/api/auth.ts
+@@ -5,6 +5,7 @@ export interface AuthUser {
+   email: string
+   name: string
+   role: string
++  totp_enabled?: boolean
+ }
+ 
+ export interface LoginResponse {
+@@ -12,8 +13,33 @@ export interface LoginResponse {
+   user: AuthUser
+ }
+ 
+-export async function login(email: string, password: string): Promise<LoginResponse> {
+-  const { data } = await client.post<LoginResponse>('/api/auth/login', { email, password })
++export interface OtpChallenge {
++  otp_required: true
++  user_id: number
++  demo_otp: string
++}
++
++export async function login(email: string, password: string): Promise<LoginResponse | OtpChallenge> {
++  const { data } = await client.post<LoginResponse | OtpChallenge>('/api/auth/login', { email, password })
++  return data
++}
++
++export async function verifyOtp(userId: number, code: string): Promise<LoginResponse> {
++  const { data } = await client.post<LoginResponse>('/api/auth/verify-otp', { user_id: userId, code })
++  return data
++}
++
++export async function enable2FA(token: string): Promise<AuthUser> {
++  const { data } = await client.post<AuthUser>('/api/auth/enable-2fa', null, {
++    headers: { Authorization: `Bearer ${token}` },
++  })
++  return data
++}
++
++export async function disable2FA(token: string): Promise<AuthUser> {
++  const { data } = await client.post<AuthUser>('/api/auth/disable-2fa', null, {
++    headers: { Authorization: `Bearer ${token}` },
++  })
+   return data
+ }
+ 
+diff --git a/datasense-ui/src/api/client.ts b/datasense-ui/src/api/client.ts
+index 6950652..76c594d 100644
+--- a/datasense-ui/src/api/client.ts
++++ b/datasense-ui/src/api/client.ts
+@@ -17,7 +17,7 @@ client.interceptors.response.use(
+       import('../store/appStore').then(({ useAppStore }) => {
+         const { logoutUser, openLogin } = useAppStore.getState()
+         logoutUser()
+-        openLogin()
++        openLogin('inline')
+       })
+     }
+     const detail = err.response?.data?.detail
+@@ -27,6 +27,6 @@ client.interceptors.response.use(
+         : typeof detail === 'object' && detail?.error
+           ? detail.error
+           : err.message
+-    return Promise.reject(new Error(message))
++    return Promise.reject(Object.assign(new Error(message), { status: err.response?.status }))
+   },
+ )
+diff --git a/datasense-ui/src/api/dashboard.ts b/datasense-ui/src/api/dashboard.ts
+index 30425ae..6434f20 100644
+--- a/datasense-ui/src/api/dashboard.ts
++++ b/datasense-ui/src/api/dashboard.ts
+@@ -96,6 +96,7 @@ export interface UploadLogEntry {
+   uploader_name: string | null
+   wave_label: string | null
+   project_name?: string | null
++  is_locked: number
+ }
+ 
+ export interface ActivityEntry {
+diff --git a/datasense-ui/src/api/projects.ts b/datasense-ui/src/api/projects.ts
+index f746e10..28c0de3 100644
+--- a/datasense-ui/src/api/projects.ts
++++ b/datasense-ui/src/api/projects.ts
+@@ -7,6 +7,7 @@ export interface Project {
+   status: string
+   sample_target: number
+   job_number: string | null
++  column_config?: string | null
+ }
+ 
+ export interface SaveQCResult {
+@@ -42,10 +43,18 @@ export async function saveQCResults(
+   token: string,
+   waveLabel?: string,
+   jobId?: string,
++  columnConfig?: Record<string, string>,
++  interviewerNameCol?: string,
++  interviewerSupervisorCol?: string,
+ ): Promise<SaveQCResult> {
+   const { data } = await client.post<SaveQCResult>(
+     `/api/projects/${projectId}/qc-results`,
+-    { file_id: fileId, filename, wave_label: waveLabel || null, job_id: jobId || null },
++    {
++      file_id: fileId, filename, wave_label: waveLabel || null, job_id: jobId || null,
++      column_config: columnConfig || null,
++      interviewer_name_col: interviewerNameCol || null,
++      interviewer_supervisor_col: interviewerSupervisorCol || null,
++    },
+     { headers: authHeader(token) },
+   )
+   return data
+diff --git a/datasense-ui/src/components/auth/LoginModal.tsx b/datasense-ui/src/components/auth/LoginModal.tsx
+index 6068cd4..81ff3b7 100644
+--- a/datasense-ui/src/components/auth/LoginModal.tsx
++++ b/datasense-ui/src/components/auth/LoginModal.tsx
+@@ -1,7 +1,7 @@
+ import React, { useState } from 'react'
+-import { X, LogIn, UserPlus, Loader2 } from 'lucide-react'
++import { X, LogIn, UserPlus, Loader2, ShieldCheck } from 'lucide-react'
+ import { useAppStore } from '../../store/appStore'
+-import { login, register } from '../../api/auth'
++import { login, register, verifyOtp } from '../../api/auth'
+ 
+ type Tab = 'login' | 'register'
+ 
+@@ -19,6 +19,11 @@ export function LoginModal() {
+   const [rPassword, setRPassword] = useState('')
+   const [rPassword2, setRPassword2] = useState('')
+ 
++  // 2FA OTP step
++  const [otpUserId, setOtpUserId] = useState<number | null>(null)
++  const [demoOtp, setDemoOtp] = useState('')
++  const [otpCode, setOtpCode] = useState('')
++
+   const [loading, setLoading] = useState(false)
+   const [error, setError] = useState('')
+   const [success, setSuccess] = useState('')
+@@ -29,7 +34,12 @@ export function LoginModal() {
+     setLoading(true)
+     try {
+       const res = await login(email.trim().toLowerCase(), password)
+-      loginUser(res.user, res.token)
++      if ('otp_required' in res) {
++        setOtpUserId(res.user_id)
++        setDemoOtp(res.demo_otp)
++      } else {
++        loginUser(res.user, res.token)
++      }
+     } catch (err) {
+       setError((err as Error).message || 'Login failed')
+     } finally {
+@@ -37,6 +47,21 @@ export function LoginModal() {
+     }
+   }
+ 
++  const handleVerifyOtp = async (e: React.FormEvent) => {
++    e.preventDefault()
++    if (otpUserId === null) return
++    setError('')
++    setLoading(true)
++    try {
++      const res = await verifyOtp(otpUserId, otpCode.trim())
++      loginUser(res.user, res.token)
++    } catch (err) {
++      setError((err as Error).message || 'Invalid code')
++    } finally {
++      setLoading(false)
++    }
++  }
++
+   const handleRegister = async (e: React.FormEvent) => {
+     e.preventDefault()
+     setError('')
+@@ -65,11 +90,13 @@ export function LoginModal() {
+         {/* Header */}
+         <div className="flex items-center justify-between px-5 py-4 border-b border-line">
+           <div className="flex items-center gap-2">
+-            {tab === 'login'
+-              ? <LogIn size={15} className="text-accent" />
+-              : <UserPlus size={15} className="text-accent" />}
++            {otpUserId !== null
++              ? <ShieldCheck size={15} className="text-accent" />
++              : tab === 'login'
++                ? <LogIn size={15} className="text-accent" />
++                : <UserPlus size={15} className="text-accent" />}
+             <span className="font-display font-bold text-sm text-tx">
+-              {tab === 'login' ? 'Sign in to Servalab' : 'Create an account'}
++              {otpUserId !== null ? 'Two-factor verification' : tab === 'login' ? 'Sign in to Servalab' : 'Create an account'}
+             </span>
+           </div>
+           <button
+@@ -80,6 +107,54 @@ export function LoginModal() {
+           </button>
+         </div>
+ 
++        {otpUserId !== null && (
++          <form onSubmit={handleVerifyOtp} className="p-5 space-y-4">
++            <p className="text-xs text-muted">
++              Enter the 6-digit code to finish signing in. This is a demo deployment with no email
++              server yet, so the code is shown below instead of being emailed.
++            </p>
++            <p className="text-xs text-accent bg-accent/10 border border-accent/30 rounded-lg px-3 py-2">
++              Demo code: <span className="font-mono font-bold">{demoOtp}</span>
++            </p>
++            <div>
++              <label className="label mb-1 block">Verification code</label>
++              <input
++                type="text"
++                value={otpCode}
++                onChange={(e) => setOtpCode(e.target.value)}
++                placeholder="000000"
++                inputMode="numeric"
++                maxLength={6}
++                required
++                autoFocus
++                className="w-full bg-surface2 border border-line rounded-lg px-3 py-2 text-sm text-tx placeholder:text-muted focus:outline-none focus:border-accent transition-colors tracking-widest"
++              />
++            </div>
++            {error && (
++              <p className="text-xs text-critical bg-critical/10 border border-critical/30 rounded-lg px-3 py-2">
++                {error}
++              </p>
++            )}
++            <button
++              type="submit"
++              disabled={loading}
++              className="w-full btn-primary flex items-center justify-center gap-2"
++            >
++              {loading ? <Loader2 size={14} className="animate-spin" /> : <ShieldCheck size={14} />}
++              {loading ? 'Verifying…' : 'Verify'}
++            </button>
++            <button
++              type="button"
++              onClick={() => { setOtpUserId(null); setOtpCode(''); setDemoOtp(''); setError('') }}
++              className="text-[11px] text-muted text-center w-full underline underline-offset-2"
++            >
++              Back to sign in
++            </button>
++          </form>
++        )}
++
++        {otpUserId === null && (
++        <>
+         {/* Tab bar */}
+         <div className="flex border-b border-line">
+           {(['login', 'register'] as Tab[]).map((t) => (
+@@ -227,6 +302,8 @@ export function LoginModal() {
+             </p>
+           </form>
+         )}
++        </>
++        )}
+       </div>
+     </div>
+   )
+diff --git a/datasense-ui/src/components/dashboard/Dashboard.tsx b/datasense-ui/src/components/dashboard/Dashboard.tsx
+index ab38b85..00039d0 100644
+--- a/datasense-ui/src/components/dashboard/Dashboard.tsx
++++ b/datasense-ui/src/components/dashboard/Dashboard.tsx
+@@ -1,6 +1,6 @@
+ import React from 'react'
+ import { useQuery } from '@tanstack/react-query'
+-import { ArrowLeft, LayoutDashboard, Loader2, LogIn, Users } from 'lucide-react'
++import { ArrowLeft, LayoutDashboard, Loader2, LogIn, Settings, Users } from 'lucide-react'
+ import { useAppStore } from '../../store/appStore'
+ 
+ const IS_DASHBOARD_DOMAIN = typeof window !== 'undefined' && (
+@@ -9,8 +9,9 @@ const IS_DASHBOARD_DOMAIN = typeof window !== 'undefined' && (
+ )
+ import { getDashboardSummary, type ProjectSummary } from '../../api/dashboard'
+ import { Overview } from './Overview'
+-import { ProjectDetail } from './ProjectDetail'
++import { ProjectDetail, ADMIN_ROLES } from './ProjectDetail'
+ import { InterviewerDirectory } from './InterviewerDirectory'
++import { AdminTab } from './tabs/AdminTab'
+ 
+ export function Dashboard() {
+   const {
+@@ -19,6 +20,7 @@ export function Dashboard() {
+     setDashboardMode, setDashboardProject, setDashboardView, openLogin,
+   } = useAppStore()
+   const token = authToken ?? ''
++  const isAdmin = authUser && ADMIN_ROLES.has(authUser.role)
+ 
+   const { data: summary = [], isLoading } = useQuery({
+     queryKey: ['dash-summary'],
+@@ -67,6 +69,21 @@ export function Dashboard() {
+           Interviewers
+         </button>
+ 
++        {/* Admin button — manage users, projects, supervisors, registry */}
++        {isAdmin && (
++          <button
++            onClick={() => setDashboardView('admin')}
++            className={`flex items-center gap-2 px-4 py-2.5 text-sm transition-colors ${
++              dashboardView === 'admin'
++                ? 'text-accent bg-accent/10 border-r-2 border-accent'
++                : 'text-muted hover:text-tx hover:bg-surface2'
++            }`}
++          >
++            <Settings size={13} />
++            Admin
++          </button>
++        )}
++
+         <div className="px-3 py-2 mt-1">
+           <p className="text-[10px] text-muted uppercase tracking-wider">Projects</p>
+         </div>
+@@ -75,7 +92,7 @@ export function Dashboard() {
+         <div className="flex-1 overflow-y-auto">
+           {!token ? (
+             <button
+-              onClick={openLogin}
++              onClick={() => openLogin()}
+               className="w-full flex items-center gap-2 px-4 py-3 text-xs text-muted hover:text-accent transition-colors"
+             >
+               <LogIn size={12} /> Sign in to view projects
+@@ -119,6 +136,7 @@ export function Dashboard() {
+           {dashboardView === 'overview' && <Overview onSelectProject={setDashboardProject} />}
+           {dashboardView === 'project' && dashboardProjectId !== null && <ProjectDetail id={dashboardProjectId} />}
+           {dashboardView === 'interviewers' && <InterviewerDirectory />}
++          {dashboardView === 'admin' && isAdmin && <AdminTab />}
+         </div>
+       </main>
+     </div>
+diff --git a/datasense-ui/src/components/dashboard/ProjectDetail.tsx b/datasense-ui/src/components/dashboard/ProjectDetail.tsx
+index dc1238b..d35d9ae 100644
+--- a/datasense-ui/src/components/dashboard/ProjectDetail.tsx
++++ b/datasense-ui/src/components/dashboard/ProjectDetail.tsx
+@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query'
+ import { Loader2 } from 'lucide-react'
+ import { useAppStore } from '../../store/appStore'
+ import { getDashboardSummary, type ProjectSummary } from '../../api/dashboard'
++import { DataTab } from './tabs/DataTab'
+ import { QualityReportTab } from './tabs/QualityReportTab'
+ import { BackcheckTab } from './tabs/BackcheckTab'
+ import { ListenInTab } from './tabs/ListenInTab'
+@@ -12,9 +13,9 @@ import { CancelledTab } from './tabs/CancelledTab'
+ import { AdminTab } from './tabs/AdminTab'
+ import { CombinedReportTab } from './tabs/CombinedReportTab'
+ 
+-type SubTab = 'quality' | 'backcheck' | 'listenin' | 'performance' | 'timing' | 'cancelled' | 'combined' | 'admin'
++type SubTab = 'data' | 'quality' | 'backcheck' | 'listenin' | 'performance' | 'timing' | 'cancelled' | 'combined' | 'admin'
+ 
+-const ADMIN_ROLES = new Set(['qc_executive', 'operations_manager'])
++export const ADMIN_ROLES = new Set(['qc_executive', 'operations_manager'])
+ 
+ interface Props { id: number }
+ 
+@@ -34,6 +35,7 @@ export function ProjectDetail({ id }: Props) {
+   const isAdmin = authUser && ADMIN_ROLES.has(authUser.role)
+ 
+   const tabs: { key: SubTab; label: string }[] = [
++    { key: 'data',         label: 'Data' },
+     { key: 'quality',      label: 'Quality Report' },
+     { key: 'backcheck',    label: 'Back-check' },
+     { key: 'listenin',     label: 'Listen-in' },
+@@ -140,6 +142,7 @@ export function ProjectDetail({ id }: Props) {
+       </div>
+ 
+       {/* Tab content */}
++      {subTab === 'data'         && <DataTab projectId={id} onViewResults={() => setSubTab('quality')} />}
+       {subTab === 'quality'      && <QualityReportTab projectId={id} />}
+       {subTab === 'backcheck'    && <BackcheckTab projectId={id} target={project.backcheck_target} />}
+       {subTab === 'listenin'     && <ListenInTab projectId={id} target={project.listenin_target} />}
+diff --git a/datasense-ui/src/components/dashboard/tabs/AdminTab.tsx b/datasense-ui/src/components/dashboard/tabs/AdminTab.tsx
+index 80fe9cd..6d25c62 100644
+--- a/datasense-ui/src/components/dashboard/tabs/AdminTab.tsx
++++ b/datasense-ui/src/components/dashboard/tabs/AdminTab.tsx
+@@ -1,6 +1,6 @@
+ import React, { useState, useRef } from 'react'
+ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+-import { UserPlus, Loader2, Trash2, UserCheck, UserX, Plus, Search, Upload } from 'lucide-react'
++import { UserPlus, Loader2, Trash2, UserCheck, UserX, Plus, Search, Upload, Lock } from 'lucide-react'
+ import { useAppStore } from '../../../store/appStore'
+ import {
+   getDashboardUsers, createDashboardUser, updateUserRole, toggleUserActive,
+@@ -769,12 +769,18 @@ export function AdminTab({ projectId }: Props) {
+                     <td className="py-1.5 pr-3 text-muted">{u.uploader_name ?? '—'}</td>
+                     <td className="py-1.5 pr-3 text-muted">{u.upload_date?.slice(0, 10)}</td>
+                     <td>
+-                      <button
+-                        onClick={() => delUploadMut.mutate({ uid: u.upload_id, rt: u.report_type })}
+-                        className="p-1 text-muted hover:text-critical transition-colors"
+-                      >
+-                        <Trash2 size={12} />
+-                      </button>
++                      {u.is_locked ? (
++                        <span className="p-1 text-muted inline-flex" title="Locked — saved upload cannot be deleted">
++                          <Lock size={12} />
++                        </span>
++                      ) : (
++                        <button
++                          onClick={() => delUploadMut.mutate({ uid: u.upload_id, rt: u.report_type })}
++                          className="p-1 text-muted hover:text-critical transition-colors"
++                        >
++                          <Trash2 size={12} />
++                        </button>
++                      )}
+                     </td>
+                   </tr>
+                 ))}
+diff --git a/datasense-ui/src/components/dashboard/tabs/DataTab.tsx b/datasense-ui/src/components/dashboard/tabs/DataTab.tsx
+new file mode 100644
+index 0000000..cf4731a
+--- /dev/null
++++ b/datasense-ui/src/components/dashboard/tabs/DataTab.tsx
+@@ -0,0 +1,142 @@
++import React, { useEffect, useRef, useState } from 'react'
++import { useMutation, useQueryClient } from '@tanstack/react-query'
++import { Loader2, Play, CheckCircle2, ArrowRight, RotateCcw, AlertCircle } from 'lucide-react'
++import { useAppStore } from '../../../store/appStore'
++import { useQCRun } from '../../../hooks/useQCRun'
++import { FileUpload } from '../../upload/FileUpload'
++import { saveQCResults } from '../../../api/projects'
++
++const UPLOAD_ROLES = new Set(['qc_executive', 'operations_manager', 'qc_officer'])
++
++interface Props {
++  projectId: number
++  onViewResults?: () => void
++}
++
++export function DataTab({ projectId, onViewResults }: Props) {
++  const { authUser, authToken, fileId, filename, jobId, jobStatus, jobProgress, jobError, results, clearFile } = useAppStore()
++  const token = authToken ?? ''
++  const qc = useQueryClient()
++  const { run, isRunning } = useQCRun()
++
++  const [savedJobId, setSavedJobId] = useState<string | null>(null)
++  const savingRef = useRef(false)
++
++  const canUpload = authUser && UPLOAD_ROLES.has(authUser.role)
++
++  const saveMut = useMutation({
++    mutationFn: () => {
++      if (!fileId || !filename) throw new Error('No file loaded')
++      return saveQCResults(projectId, fileId, filename, token, undefined, jobId ?? undefined)
++    },
++    onSuccess: () => {
++      qc.invalidateQueries({ queryKey: ['dash-quality', projectId] })
++      qc.invalidateQueries({ queryKey: ['dash-upload-log', projectId] })
++      qc.invalidateQueries({ queryKey: ['dash-summary'] })
++      setSavedJobId(jobId)
++    },
++    onSettled: () => {
++      savingRef.current = false
++    },
++  })
++
++  // Auto-save the moment a run completes — no manual "Save" click needed.
++  useEffect(() => {
++    if (jobStatus !== 'complete' || !jobId || !fileId) return
++    if (jobId === savedJobId || savingRef.current) return
++    savingRef.current = true
++    saveMut.mutate()
++  }, [jobStatus, jobId, fileId])
++
++  if (!canUpload) {
++    return (
++      <div className="card p-8 text-center text-muted text-sm">
++        You don't have permission to upload data for this project.
++      </div>
++    )
++  }
++
++  const justSaved = jobStatus === 'complete' && jobId === savedJobId
++
++  return (
++    <div className="space-y-4">
++      {!fileId && <FileUpload />}
++
++      {fileId && jobStatus === 'idle' && (
++        <div className="card p-4 flex items-center justify-between gap-3">
++          <div className="text-sm text-tx truncate">{filename}</div>
++          <button onClick={run} className="btn-primary flex items-center gap-2 shrink-0">
++            <Play size={14} /> Run Checks
++          </button>
++        </div>
++      )}
++
++      {(isRunning || jobStatus === 'queued' || jobStatus === 'running') && (
++        <div className="card p-4 space-y-2">
++          <div className="flex items-center gap-2 text-sm text-tx">
++            <Loader2 size={14} className="animate-spin text-accent" />
++            {jobStatus === 'queued' ? 'Queued…' : `Running checks… ${jobProgress}%`}
++          </div>
++          <div className="w-full bg-line rounded-full h-1.5">
++            <div className="bg-accent h-1.5 rounded-full transition-all" style={{ width: `${jobProgress || 10}%` }} />
++          </div>
++        </div>
++      )}
++
++      {jobStatus === 'failed' && (
++        <div className="card p-4 flex items-center gap-2 text-sm text-critical">
++          <AlertCircle size={14} />
++          {jobError ?? 'QC run failed.'}
++        </div>
++      )}
++
++      {jobStatus === 'complete' && results && (
++        <div className="card p-4 space-y-3">
++          <div className="flex items-center gap-2 text-sm text-tx">
++            {saveMut.isPending ? (
++              <>
++                <Loader2 size={14} className="animate-spin text-accent" /> Saving results to project…
++              </>
++            ) : justSaved ? (
++              <>
++                <CheckCircle2 size={14} className="text-accent" /> Saved to project
++              </>
++            ) : saveMut.isError ? (
++              <>
++                <AlertCircle size={14} className="text-critical" /> {String(saveMut.error)}
++              </>
++            ) : null}
++          </div>
++
++          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
++            <div className="card2 p-3 text-center">
++              <p className="label mb-0.5">Total Flags</p>
++              <p className="text-lg font-bold font-display text-tx">{results.total_flags}</p>
++            </div>
++            {Object.entries(results.flagged_by_severity).map(([sev, count]) => (
++              <div key={sev} className="card2 p-3 text-center">
++                <p className="label mb-0.5 capitalize">{sev}</p>
++                <p className={`text-lg font-bold font-display ${
++                  sev === 'critical' ? 'text-critical' : sev === 'warning' ? 'text-warning' : 'text-muted'
++                }`}>
++                  {count}
++                </p>
++              </div>
++            ))}
++          </div>
++
++          <div className="flex flex-wrap gap-2">
++            <button onClick={clearFile} className="btn-ghost flex items-center gap-1.5 text-xs">
++              <RotateCcw size={12} /> Upload another file
++            </button>
++            {onViewResults && (
++              <button onClick={onViewResults} className="btn-ghost flex items-center gap-1.5 text-xs">
++                View in Quality Report tab <ArrowRight size={12} />
++              </button>
++            )}
++          </div>
++        </div>
++      )}
++    </div>
++  )
++}
+diff --git a/datasense-ui/src/components/layout/Header.tsx b/datasense-ui/src/components/layout/Header.tsx
+index b0b9c78..531c6bb 100644
+--- a/datasense-ui/src/components/layout/Header.tsx
++++ b/datasense-ui/src/components/layout/Header.tsx
+@@ -30,7 +30,9 @@ const PRE_FILE_TABS = new Set(['Config', 'Demos'])
+ 
+ export function Header({ onSettings }: Props) {
+   const { activeTab, setActiveTab, jobStatus, jobProgress, fileId, authUser, openLogin, logoutUser, dashboardMode, setDashboardMode, setDashboardProject } = useAppStore()
+-  const visibleTabs = fileId ? TABS : TABS.filter(t => PRE_FILE_TABS.has(t.label))
++  const visibleTabs = dashboardMode
++    ? TABS.filter(t => PRE_FILE_TABS.has(t.label))
++    : (fileId ? TABS : TABS.filter(t => PRE_FILE_TABS.has(t.label)))
+ 
+   return (
+     <header className="bg-surface border-b border-line shrink-0">
+@@ -110,7 +112,7 @@ export function Header({ onSettings }: Props) {
+             </div>
+           ) : (
+             <button
+-              onClick={openLogin}
++              onClick={() => openLogin()}
+               className="flex items-center gap-1 text-xs text-muted hover:text-tx transition-colors px-2 py-1 rounded hover:bg-surface2"
+               title="Sign in"
+             >
+diff --git a/datasense-ui/src/components/onboarding/OnboardingTooltip.tsx b/datasense-ui/src/components/onboarding/OnboardingTooltip.tsx
+index 296f625..376c1bd 100644
+--- a/datasense-ui/src/components/onboarding/OnboardingTooltip.tsx
++++ b/datasense-ui/src/components/onboarding/OnboardingTooltip.tsx
+@@ -1,16 +1,18 @@
+ import React, { useEffect, useState } from 'react'
+ import { X } from 'lucide-react'
+ import { ONBOARDING_STEPS } from '../../data/onboarding'
++import { useAppStore } from '../../store/appStore'
+ 
+ const STORAGE_KEY = 'servallab_onboarding_done'
+ 
+ export function OnboardingTooltip() {
++  const dashboardMode = useAppStore((s) => s.dashboardMode)
+   const [visible, setVisible] = useState(false)
+   const [step, setStep] = useState(0)
+ 
+   useEffect(() => {
+-    if (!localStorage.getItem(STORAGE_KEY)) setVisible(true)
+-  }, [])
++    if (!dashboardMode && !localStorage.getItem(STORAGE_KEY)) setVisible(true)
++  }, [dashboardMode])
+ 
+   const close = () => {
+     localStorage.setItem(STORAGE_KEY, '1')
+diff --git a/datasense-ui/src/components/settings/SettingsPanel.tsx b/datasense-ui/src/components/settings/SettingsPanel.tsx
+index cd28570..a04a09e 100644
+--- a/datasense-ui/src/components/settings/SettingsPanel.tsx
++++ b/datasense-ui/src/components/settings/SettingsPanel.tsx
+@@ -1,7 +1,8 @@
+ import React, { useState } from 'react'
+-import { X, ChevronDown, ChevronRight, RotateCcw, Eye, EyeOff, CheckCircle2, AlertCircle, Mail, MessageSquare } from 'lucide-react'
++import { X, ChevronDown, ChevronRight, RotateCcw, Eye, EyeOff, CheckCircle2, AlertCircle, Mail, MessageSquare, ShieldCheck, Loader2 } from 'lucide-react'
+ import { relaunchOnboarding } from '../onboarding/OnboardingTooltip'
+ import { useAppStore } from '../../store/appStore'
++import { enable2FA, disable2FA } from '../../api/auth'
+ 
+ const APP_VERSION = '2.0.0'
+ 
+@@ -39,13 +40,29 @@ function Accordion({ label, children }: { label: string; children: React.ReactNo
+ interface Props { onClose: () => void }
+ 
+ export function SettingsPanel({ onClose }: Props) {
+-  const { groqApiKey, setGroqApiKey, config, updateConfig, theme, setTheme, accent, setAccent } = useAppStore()
++  const { groqApiKey, setGroqApiKey, config, updateConfig, theme, setTheme, accent, setAccent, authUser, authToken, setAuthUser } = useAppStore()
+   const [showKey, setShowKey] = useState(false)
+   const [localKey, setLocalKey] = useState(groqApiKey)
++  const [twoFaLoading, setTwoFaLoading] = useState(false)
++  const [twoFaError, setTwoFaError] = useState('')
+ 
+   const saveKey = () => setGroqApiKey(localKey.trim())
+   const hasKey = groqApiKey.length > 0
+ 
++  const toggle2FA = async () => {
++    if (!authToken) return
++    setTwoFaError('')
++    setTwoFaLoading(true)
++    try {
++      const updated = authUser?.totp_enabled ? await disable2FA(authToken) : await enable2FA(authToken)
++      setAuthUser(updated)
++    } catch (err) {
++      setTwoFaError((err as Error).message || 'Could not update 2FA setting')
++    } finally {
++      setTwoFaLoading(false)
++    }
++  }
++
+   return (
+     <div className="fixed inset-0 z-40 flex justify-end animate-fade-in">
+       <div className="absolute inset-0 bg-black/40" onClick={onClose} />
+@@ -151,6 +168,37 @@ export function SettingsPanel({ onClose }: Props) {
+           </div>
+         </section>
+ 
++        {/* Security — 2FA, only when signed in */}
++        {authUser && (
++          <section className="space-y-3">
++            <p className="label">Security</p>
++            <div className="flex items-center gap-2 text-xs">
++              {authUser.totp_enabled
++                ? <><CheckCircle2 size={12} className="text-accent shrink-0" /><span className="text-accent">Two-factor authentication is on</span></>
++                : <><AlertCircle size={12} className="text-muted shrink-0" /><span className="text-muted">Two-factor authentication is off</span></>
++              }
++            </div>
++            <p className="text-xs text-muted leading-relaxed">
++              When enabled, signing in requires a one-time code in addition to your password.
++              This is a demo deployment with no email server yet, so the code is shown on screen
++              instead of being emailed.
++            </p>
++            {twoFaError && (
++              <p className="text-xs text-critical bg-critical/10 border border-critical/30 rounded-lg px-3 py-2">
++                {twoFaError}
++              </p>
++            )}
++            <button
++              onClick={toggle2FA}
++              disabled={twoFaLoading}
++              className="w-full flex items-center gap-2 btn-ghost text-sm justify-center"
++            >
++              {twoFaLoading ? <Loader2 size={14} className="animate-spin" /> : <ShieldCheck size={14} />}
++              {authUser.totp_enabled ? 'Disable 2FA' : 'Enable 2FA'}
++            </button>
++          </section>
++        )}
++
+         {/* Onboarding */}
+         <section className="space-y-2">
+           <p className="label">Onboarding</p>
+diff --git a/datasense-ui/src/components/tabs/QCReport.tsx b/datasense-ui/src/components/tabs/QCReport.tsx
+index 2c755f1..736d4ee 100644
+--- a/datasense-ui/src/components/tabs/QCReport.tsx
++++ b/datasense-ui/src/components/tabs/QCReport.tsx
+@@ -1,6 +1,7 @@
+ import React, { useEffect, useState } from 'react'
+ import { useMutation, useQuery } from '@tanstack/react-query'
+ import { Download, ChevronDown, ChevronUp, Info, XCircle, Activity, Sparkles, FileText, Database, ChevronRight, Check, Filter, Search, Users, Loader2 } from 'lucide-react'
++import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, PieChart, Pie, Legend } from 'recharts'
+ import { useAppStore } from '../../store/appStore'
+ import { downloadReport } from '../../api/qc'
+ import { explainFlags, generateQCSummary } from '../../api/ai'
+@@ -12,6 +13,13 @@ import type { CheckResult } from '../../types'
+ import type { Project } from '../../api/projects'
+ 
+ const SEV_ORDER: Record<string, number> = { critical: 0, warning: 1, info: 2 }
++const SEV_COLORS: Record<string, string> = { critical: '#f04a6a', warning: '#f0c04a', info: '#4af0a0' }
++const RISK_COLORS: Record<string, string> = { HIGH: '#f04a6a', MEDIUM: '#f0c04a', LOW: '#4af0a0' }
++const CHART_TOOLTIP_STYLE = {
++  contentStyle: { background: '#111318', border: '1px solid #1f2330', borderRadius: 6 },
++  labelStyle: { color: '#e8eaf2' },
++  itemStyle: { color: '#4af0a0' },
++}
+ 
+ function MetricCard({ label, value, color }: { label: string; value: number | string; color?: string }) {
+   return (
+@@ -148,10 +156,8 @@ function CheckAccordion({
+   )
+ }
+ 
+-function InterviewerRiskPanel() {
+-  const { results, jobId, fileId, jobStatus, config, itvTabState, setItvTabState } = useAppStore()
+-  const [open, setOpen] = useState(true)
+-  const [promptCol, setPromptCol] = useState('')
++function useInterviewerRiskRows() {
++  const { results, jobId, fileId, jobStatus, config, itvTabState } = useAppStore()
+ 
+   const interviewerCol = (
+     [
+@@ -199,6 +205,24 @@ function InterviewerRiskPanel() {
+     ? (itvTabState.intColName || itvTabState.intCol)
+     : (riskQuery.data?.interviewer_column ?? interviewerCol)
+ 
++  return {
++    results,
++    interviewerCol,
++    hasItvRows,
++    rows,
++    colName,
++    isLoading: riskQuery.isPending && !hasItvRows,
++    isError: riskQuery.isError && !hasItvRows,
++  }
++}
++
++function InterviewerRiskPanel() {
++  const { setItvTabState } = useAppStore()
++  const [open, setOpen] = useState(true)
++  const [promptCol, setPromptCol] = useState('')
++
++  const { results, interviewerCol, hasItvRows, rows, colName, isLoading, isError } = useInterviewerRiskRows()
++
+   if (!results) return null
+ 
+   if (!interviewerCol && !hasItvRows) {
+@@ -227,13 +251,12 @@ function InterviewerRiskPanel() {
+     )
+   }
+ 
+-  if (riskQuery.isError && !hasItvRows) return null
++  if (isError) return null
+ 
+   const high = rows.filter((r) => r.risk_level === 'HIGH').length
+   const medium = rows.filter((r) => r.risk_level === 'MEDIUM').length
+   const low = rows.filter((r) => r.risk_level === 'LOW').length
+   const top = rows.slice(0, 10)
+-  const isLoading = riskQuery.isPending && !hasItvRows
+   const showDur = top.some((r) => r.avg_duration != null)
+   const showSup = top.some((r) => r.supervisor && r.supervisor !== 'None' && r.supervisor !== 'null')
+ 
+@@ -374,6 +397,92 @@ function InterviewerRiskPanel() {
+   )
+ }
+ 
++function SeverityBreakdownChart({ flaggedBySeverity }: { flaggedBySeverity: Record<string, number> }) {
++  const data = [
++    { name: 'Critical', value: flaggedBySeverity.critical ?? 0, fill: SEV_COLORS.critical },
++    { name: 'Warning',  value: flaggedBySeverity.warning ?? 0,  fill: SEV_COLORS.warning },
++    { name: 'Info',     value: flaggedBySeverity.info ?? 0,     fill: SEV_COLORS.info },
++  ].filter((d) => d.value > 0)
++
++  return (
++    <div className="card p-4">
++      <p className="text-xs font-medium text-tx mb-3">Flags by Severity</p>
++      {data.length > 0 ? (
++        <ResponsiveContainer width="100%" height={180}>
++          <PieChart>
++            <Pie
++              data={data}
++              cx="50%"
++              cy="45%"
++              outerRadius={62}
++              dataKey="value"
++              label={({ name, percent }) => `${(percent * 100).toFixed(0)}%`}
++              labelLine={false}
++            >
++              {data.map((entry, i) => (
++                <Cell key={i} fill={entry.fill} />
++              ))}
++            </Pie>
++            <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 10, color: '#8b90a8' }} />
++            <Tooltip {...CHART_TOOLTIP_STYLE} formatter={(v: number, name: string) => [v, name]} />
++          </PieChart>
++        </ResponsiveContainer>
++      ) : (
++        <p className="text-xs text-muted text-center mt-8">No flags to chart.</p>
++      )}
++    </div>
++  )
++}
++
++function InterviewerFlagChart({ nameFilter }: { nameFilter: string }) {
++  const { results, interviewerCol, rows, colName, isLoading } = useInterviewerRiskRows()
++
++  if (!results) return null
++
++  const filtered = nameFilter.trim()
++    ? rows.filter((r) => String(r[colName] ?? r[interviewerCol] ?? '').toLowerCase().includes(nameFilter.trim().toLowerCase()))
++    : rows
++  const top = filtered.slice(0, 10)
++
++  return (
++    <div className="card p-4">
++      <p className="text-xs font-medium text-tx mb-3">Top 10 Interviewers by Flag Count</p>
++      {isLoading && (
++        <div className="flex items-center justify-center gap-2 h-[180px] text-xs text-muted">
++          <Loader2 size={12} className="animate-spin" />
++          Computing…
++        </div>
++      )}
++      {!isLoading && top.length > 0 && (
++        <ResponsiveContainer width="100%" height={180}>
++          <BarChart data={top} margin={{ top: 4, right: 4, left: -28, bottom: 32 }}>
++            <CartesianGrid strokeDasharray="3 3" stroke="#1f2330" />
++            <XAxis
++              dataKey={colName}
++              tick={{ fill: '#8b90a8', fontSize: 9 }}
++              angle={-35}
++              textAnchor="end"
++              interval={0}
++            />
++            <YAxis allowDecimals={false} tick={{ fill: '#8b90a8', fontSize: 9 }} />
++            <Tooltip {...CHART_TOOLTIP_STYLE} formatter={(v: number) => [v, 'Flags']} />
++            <Bar dataKey="total_flags" radius={[3, 3, 0, 0]}>
++              {top.map((r, i) => (
++                <Cell key={i} fill={RISK_COLORS[r.risk_level] ?? SEV_COLORS.info} />
++              ))}
++            </Bar>
++          </BarChart>
++        </ResponsiveContainer>
++      )}
++      {!isLoading && top.length === 0 && (
++        <p className="text-xs text-muted text-center mt-8">
++          {nameFilter.trim() ? 'No interviewers match that filter.' : 'No interviewer data available.'}
++        </p>
++      )}
++    </div>
++  )
++}
++
+ type UploadStatus = 'idle' | 'uploading' | 'done' | 'error'
+ 
+ const SUPPORT_FILES = [
+@@ -458,8 +567,16 @@ function SupportingFilesSection({ projectId, waveLabel, token }: { projectId: nu
+   )
+ }
+ 
++const STANDARD_FIELDS: { key: string; label: string; aliases: string[] }[] = [
++  { key: 'interviewer_id',   label: 'Interviewer ID',     aliases: ['INTERVIEWER_ID', 'INTERVIEWER ID'] },
++  { key: 'instance_id',      label: 'Instance/Record ID', aliases: ['INSTANCE_ID', 'INSTANCE ID'] },
++  { key: 'interview_date',   label: 'Interview date',     aliases: ['INTERVIEW_DATE', 'INTERVIEW DATE'] },
++  { key: 'duration_minutes', label: 'Duration (minutes)', aliases: ['DURATION_MINUTES', 'DURATION MINUTES'] },
++  { key: 'region',           label: 'Region',             aliases: ['REGION'] },
++]
++
+ function SaveToProject() {
+-  const { authUser, authToken, fileId, jobId, filename, openLogin, setDashboardMode, setDashboardProject } = useAppStore()
++  const { authUser, authToken, fileId, jobId, filename, columnNames, config, openLogin, setDashboardMode, setDashboardProject } = useAppStore()
+   const [expanded, setExpanded] = useState(false)
+   const [mode, setMode] = useState<'pick' | 'new'>('pick')
+   const [selectedId, setSelectedId] = useState<number | ''>('')
+@@ -469,6 +586,10 @@ function SaveToProject() {
+   const [savedProjectId, setSavedProjectId] = useState<number | null>(null)
+   const [saveError, setSaveError] = useState('')
+   const [suggestedWave, setSuggestedWave] = useState('')
++  const [pendingDuplicateName, setPendingDuplicateName] = useState('')
++  const [columnConfig, setColumnConfig] = useState<Record<string, string>>({})
++  const [interviewerNameCol, setInterviewerNameCol] = useState('')
++  const [interviewerSupervisorCol, setInterviewerSupervisorCol] = useState('')
+ 
+   const projectsQuery = useQuery<Project[]>({
+     queryKey: ['projects', authToken],
+@@ -476,6 +597,29 @@ function SaveToProject() {
+     enabled: !!authToken && expanded,
+   })
+ 
++  const upperCols = columnNames.map((c) => c.trim().toUpperCase())
++  const unmappedFields = STANDARD_FIELDS.filter((f) => !f.aliases.some((a) => upperCols.includes(a)))
++  const aliasMatchCol = (key: string) => {
++    const f = STANDARD_FIELDS.find((sf) => sf.key === key)
++    const idx = f ? upperCols.findIndex((u) => f.aliases.includes(u)) : -1
++    return idx >= 0 ? columnNames[idx] : ''
++  }
++  // Resolved interviewer column: explicit mapping > static alias match > whatever the
++  // user already configured elsewhere (interviewer duration/productivity/fabrication checks)
++  const interviewerIdCol = columnConfig.interviewer_id || aliasMatchCol('interviewer_id')
++
++  // If no alias matched, fall back to the app's already-configured interviewer column so
++  // the save doesn't silently skip interviewer detection just because the header is non-standard.
++  useEffect(() => {
++    if (columnConfig.interviewer_id || aliasMatchCol('interviewer_id')) return
++    const configuredCol = config.interviewer_duration_check.interviewer_column
++      || config.interviewer_productivity_check.interviewer_column
++      || config.fabrication_check.interviewer_column
++    if (configuredCol && columnNames.includes(configuredCol)) {
++      setColumnConfig((c) => ({ ...c, interviewer_id: configuredCol }))
++    }
++  }, [columnNames]) // eslint-disable-line react-hooks/exhaustive-deps
++
+   const saveMutation = useMutation({
+     mutationFn: async () => {
+       if (!authToken || !fileId || !filename) throw new Error('Missing auth or file')
+@@ -491,19 +635,43 @@ function SaveToProject() {
+         projectId = Number(selectedId)
+       }
+ 
+-      const result = await saveQCResults(projectId, fileId, filename, authToken, waveLabel.trim() || undefined, jobId ?? undefined)
++      const finalColumnConfig = Object.fromEntries(Object.entries(columnConfig).filter(([, v]) => v))
++      const result = await saveQCResults(
++        projectId, fileId, filename, authToken,
++        waveLabel.trim() || undefined, jobId ?? undefined,
++        Object.keys(finalColumnConfig).length ? finalColumnConfig : undefined,
++        interviewerNameCol || undefined,
++        interviewerSupervisorCol || undefined,
++      )
+       setSavedProjectId(projectId)
+       return result
+     },
+     onSuccess: () => {
+       setSaved(true)
+       setSaveError('')
++      setPendingDuplicateName('')
+     },
+     onError: (err) => {
++      const status = (err as { status?: number }).status
++      if (mode === 'new' && status === 409) {
++        setPendingDuplicateName(newName.trim())
++      } else {
++        setPendingDuplicateName('')
++      }
+       setSaveError((err as Error).message)
+     },
+   })
+ 
++  // Once "Use existing project instead" switches back to pick mode, pre-select the matching project
++  useEffect(() => {
++    if (!pendingDuplicateName || !projectsQuery.data) return
++    const found = projectsQuery.data.find((p) => p.name.toLowerCase() === pendingDuplicateName.toLowerCase())
++    if (found) {
++      setSelectedId(found.id)
++      setPendingDuplicateName('')
++    }
++  }, [pendingDuplicateName, projectsQuery.data])
++
+   // Suggest next wave label when a project is selected
+   const { data: uploadLog } = useQuery({
+     queryKey: ['upload-log-wave', selectedId, authToken],
+@@ -533,7 +701,7 @@ function SaveToProject() {
+           <Database size={14} />
+           Save results to a dashboard project
+         </div>
+-        <button onClick={openLogin} className="btn-ghost text-xs flex items-center gap-1">
++        <button onClick={() => openLogin('inline')} className="btn-ghost text-xs flex items-center gap-1">
+           Sign in <ChevronRight size={12} />
+         </button>
+       </div>
+@@ -546,7 +714,7 @@ function SaveToProject() {
+         <div className="flex items-center justify-between gap-3">
+           <div className="flex items-center gap-2 text-accent text-sm">
+             <Check size={14} />
+-            Results saved to project.
++            Results saved to project — upload is now locked.
+           </div>
+           {savedProjectId !== null && (
+             <button
+@@ -647,8 +815,66 @@ function SaveToProject() {
+             )}
+           </div>
+ 
++          {unmappedFields.length > 0 && (
++            <div className="space-y-1.5 pt-1 border-t border-line/60">
++              <p className="text-[10px] text-muted uppercase tracking-wider">Map columns (not auto-detected)</p>
++              {unmappedFields.map((f) => (
++                <div key={f.key} className="flex items-center gap-2">
++                  <span className="text-xs text-muted w-32 shrink-0">{f.label}</span>
++                  <select
++                    value={columnConfig[f.key] ?? ''}
++                    onChange={(e) => setColumnConfig((c) => ({ ...c, [f.key]: e.target.value }))}
++                    className="flex-1 bg-surface2 border border-line rounded px-2 py-1 text-xs text-tx"
++                  >
++                    <option value="">— skip —</option>
++                    {columnNames.map((c) => <option key={c} value={c}>{c}</option>)}
++                  </select>
++                </div>
++              ))}
++            </div>
++          )}
++
++          {interviewerIdCol && (
++            <div className="space-y-1.5 pt-1 border-t border-line/60">
++              <p className="text-[10px] text-muted uppercase tracking-wider">Enrich interviewer registry (optional)</p>
++              <div className="flex items-center gap-2">
++                <span className="text-xs text-muted w-32 shrink-0">Interviewer name</span>
++                <select
++                  value={interviewerNameCol}
++                  onChange={(e) => setInterviewerNameCol(e.target.value)}
++                  className="flex-1 bg-surface2 border border-line rounded px-2 py-1 text-xs text-tx"
++                >
++                  <option value="">— skip —</option>
++                  {columnNames.map((c) => <option key={c} value={c}>{c}</option>)}
++                </select>
++              </div>
++              <div className="flex items-center gap-2">
++                <span className="text-xs text-muted w-32 shrink-0">Supervisor</span>
++                <select
++                  value={interviewerSupervisorCol}
++                  onChange={(e) => setInterviewerSupervisorCol(e.target.value)}
++                  className="flex-1 bg-surface2 border border-line rounded px-2 py-1 text-xs text-tx"
++                >
++                  <option value="">— skip —</option>
++                  {columnNames.map((c) => <option key={c} value={c}>{c}</option>)}
++                </select>
++              </div>
++            </div>
++          )}
++
+           {saveError && (
+-            <p className="text-xs text-critical bg-critical/10 border border-critical/30 rounded px-3 py-2">{saveError}</p>
++            <div className="text-xs text-critical bg-critical/10 border border-critical/30 rounded px-3 py-2 space-y-1.5">
++              <p>{saveError}</p>
++              {pendingDuplicateName && (
++                <button
++                  type="button"
++                  onClick={() => setMode('pick')}
++                  className="text-[11px] text-accent underline underline-offset-2"
++                >
++                  Use existing project instead
++                </button>
++              )}
++            </div>
+           )}
+ 
+           <button
+@@ -671,6 +897,7 @@ export function QCReport() {
+   const [sevFilter, setSevFilter] = useState<'all' | 'critical' | 'warning' | 'info'>('all')
+   const [minFlags, setMinFlags] = useState(0)
+   const [checkSearch, setCheckSearch] = useState('')
++  const [itvFilter, setItvFilter] = useState('')
+ 
+   const summaryMutation = useMutation({
+     mutationFn: () =>
+@@ -844,6 +1071,16 @@ export function QCReport() {
+               className="w-full pl-6 py-0.5 text-xs"
+             />
+           </div>
++          <div className="relative flex-1 min-w-32">
++            <Users size={11} className="absolute left-2 top-1/2 -translate-y-1/2 text-muted" />
++            <input
++              type="text"
++              placeholder="Filter interviewer chart…"
++              value={itvFilter}
++              onChange={e => setItvFilter(e.target.value)}
++              className="w-full pl-6 py-0.5 text-xs"
++            />
++          </div>
+           {(sevFilter !== 'all' || minFlags > 0 || checkSearch) && (
+             <button
+               onClick={() => { setSevFilter('all'); setMinFlags(0); setCheckSearch('') }}
+@@ -860,6 +1097,12 @@ export function QCReport() {
+         )}
+       </div>
+ 
++      {/* Visuals — severity breakdown + top interviewer flags */}
++      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
++        <SeverityBreakdownChart flaggedBySeverity={results.flagged_by_severity} />
++        <InterviewerFlagChart nameFilter={itvFilter} />
++      </div>
++
+       {/* Main pipeline checks — grouped by severity */}
+       <div className="space-y-4">
+         {results.total_flags === 0 && supplementalChecks.length === 0 ? (
+diff --git a/datasense-ui/src/store/appStore.ts b/datasense-ui/src/store/appStore.ts
+index 136674e..d445764 100644
+--- a/datasense-ui/src/store/appStore.ts
++++ b/datasense-ui/src/store/appStore.ts
+@@ -10,6 +10,11 @@ import type { AuthUser } from '../api/auth'
+ 
+ type JobStatus = 'idle' | 'queued' | 'running' | 'complete' | 'failed'
+ 
++export const IS_DASHBOARD_DOMAIN = typeof window !== 'undefined' && (
++  window.location.hostname.includes('dashboard.') ||
++  new URLSearchParams(window.location.search).get('mode') === 'dashboard'
++)
++
+ // ── Tab state types ───────────────────────────────────────────────────────────
+ 
+ export interface IfCondition {
+@@ -133,18 +138,20 @@ interface AppState {
+   authUser: AuthUser | null
+   authToken: string | null
+   loginOpen: boolean
++  loginIntent: 'default' | 'inline'
+   loginUser: (user: AuthUser, token: string) => void
+   logoutUser: () => void
+-  openLogin: () => void
++  setAuthUser: (user: AuthUser) => void
++  openLogin: (intent?: 'default' | 'inline') => void
+   closeLogin: () => void
+ 
+   // dashboard mode
+   dashboardMode: boolean
+   dashboardProjectId: number | null
+-  dashboardView: 'overview' | 'project' | 'interviewers'
++  dashboardView: 'overview' | 'project' | 'interviewers' | 'admin'
+   setDashboardMode: (on: boolean) => void
+   setDashboardProject: (id: number | null) => void
+-  setDashboardView: (view: 'overview' | 'project' | 'interviewers') => void
++  setDashboardView: (view: 'overview' | 'project' | 'interviewers' | 'admin') => void
+ 
+   // session restore
+   sessionRestored: boolean
+@@ -201,8 +208,9 @@ export const useAppStore = create<AppState>((set) => ({
+   })(),
+   authToken: localStorage.getItem('ds_auth_token') ?? null,
+   loginOpen: false,
++  loginIntent: 'default' as const,
+   activeTab: 'QC Report',
+-  dashboardMode: false,
++  dashboardMode: true,
+   dashboardProjectId: null,
+   dashboardView: 'overview' as const,
+   sessionRestored: !!_session?.results,
+@@ -280,14 +288,25 @@ export const useAppStore = create<AppState>((set) => ({
+   loginUser: (user, token) => {
+     localStorage.setItem('ds_auth_user', JSON.stringify(user))
+     localStorage.setItem('ds_auth_token', token)
+-    set({ authUser: user, authToken: token, loginOpen: false })
++    set((s) => {
++      const goDashboard = s.loginIntent === 'default'
++      return {
++        authUser: user, authToken: token, loginOpen: false,
++        loginIntent: 'default',
++        ...(goDashboard ? { dashboardMode: true } : {}),
++      }
++    })
+   },
+   logoutUser: () => {
+     localStorage.removeItem('ds_auth_user')
+     localStorage.removeItem('ds_auth_token')
+-    set({ authUser: null, authToken: null })
++    set({ authUser: null, authToken: null, dashboardMode: true })
++  },
++  setAuthUser: (user) => {
++    localStorage.setItem('ds_auth_user', JSON.stringify(user))
++    set({ authUser: user })
+   },
+-  openLogin: () => set({ loginOpen: true }),
++  openLogin: (intent) => set({ loginOpen: true, loginIntent: intent ?? 'default' }),
+   closeLogin: () => set({ loginOpen: false }),
+ 
+   setDashboardMode: (on) => set({ dashboardMode: on }),
+diff --git a/routers/auth.py b/routers/auth.py
+index 03b3beb..f92f0bc 100644
+--- a/routers/auth.py
++++ b/routers/auth.py
+@@ -1,6 +1,7 @@
+ import os
++import secrets
+ from datetime import datetime, timedelta, timezone
+-from typing import Optional
++from typing import Optional, Union
+ 
+ import bcrypt
+ import jwt
+@@ -12,6 +13,7 @@ import shared_db
+ SECRET_KEY = os.environ.get("JWT_SECRET", "servallab-dev-secret-change-in-prod")
+ ALGORITHM = "HS256"
+ TOKEN_EXPIRE_HOURS = 24 * 7
++OTP_EXPIRE_MINUTES = 10
+ 
+ 
+ class LoginRequest(BaseModel):
+@@ -24,6 +26,7 @@ class UserOut(BaseModel):
+     email: str
+     name: str
+     role: str
++    totp_enabled: bool = False
+ 
+ 
+ class LoginResponse(BaseModel):
+@@ -31,6 +34,17 @@ class LoginResponse(BaseModel):
+     user: UserOut
+ 
+ 
++class OtpChallenge(BaseModel):
++    otp_required: bool = True
++    user_id: int
++    demo_otp: str
++
++
++class VerifyOtpRequest(BaseModel):
++    user_id: int
++    code: str
++
++
+ class RegisterRequest(BaseModel):
+     email: str
+     password: str
+@@ -76,18 +90,64 @@ def get_current_user(authorization: str = Header(default="")) -> dict:
+     return user
+ 
+ 
+-@router.post("/auth/login", response_model=LoginResponse)
++def _user_out(user: dict) -> UserOut:
++    return UserOut(
++        id=user["id"], email=user["email"], name=user["full_name"], role=user["role"],
++        totp_enabled=bool(user.get("totp_enabled")),
++    )
++
++
++@router.post("/auth/login", response_model=Union[LoginResponse, OtpChallenge])
+ def login(req: LoginRequest):
+     if not shared_db.db_available():
+         raise HTTPException(status_code=503, detail="Auth database not available")
+     user = shared_db.get_user_by_email(req.email.strip().lower())
+     if not user or not _verify_password(req.password, user["password_hash"]):
+         raise HTTPException(status_code=401, detail="Invalid email or password")
++
++    if user.get("totp_enabled"):
++        code = f"{secrets.randbelow(1_000_000):06d}"
++        otp_hash = bcrypt.hashpw(code.encode(), bcrypt.gensalt()).decode()
++        expires_at = (datetime.now(tz=timezone.utc) + timedelta(minutes=OTP_EXPIRE_MINUTES)).isoformat()
++        shared_db.set_user_otp(user["id"], otp_hash, expires_at)
++        # demo_otp is returned directly because this is a demo deployment with no email server —
++        # a real deployment would email the code instead of including it in the response.
++        return OtpChallenge(user_id=user["id"], demo_otp=code)
++
+     token = _make_token(user["id"])
+-    return LoginResponse(
+-        token=token,
+-        user=UserOut(id=user["id"], email=user["email"], name=user["full_name"], role=user["role"]),
+-    )
++    return LoginResponse(token=token, user=_user_out(user))
++
++
++@router.post("/auth/verify-otp", response_model=LoginResponse)
++def verify_otp(req: VerifyOtpRequest):
++    if not shared_db.db_available():
++        raise HTTPException(status_code=503, detail="Auth database not available")
++    user = shared_db.get_user_by_id(req.user_id)
++    if not user or not user.get("otp_code"):
++        raise HTTPException(status_code=401, detail="No pending verification for this user")
++    expires_at = user.get("otp_expires_at")
++    if not expires_at or datetime.now(tz=timezone.utc) > datetime.fromisoformat(expires_at):
++        shared_db.clear_user_otp(user["id"])
++        raise HTTPException(status_code=401, detail="Code expired — please log in again")
++    if not bcrypt.checkpw(req.code.encode(), user["otp_code"].encode()):
++        raise HTTPException(status_code=401, detail="Invalid code")
++    shared_db.clear_user_otp(user["id"])
++    token = _make_token(user["id"])
++    return LoginResponse(token=token, user=_user_out(user))
++
++
++@router.post("/auth/enable-2fa", response_model=UserOut)
++def enable_2fa(user: dict = Depends(get_current_user)):
++    shared_db.set_2fa_enabled(user["id"], True)
++    user["totp_enabled"] = 1
++    return _user_out(user)
++
++
++@router.post("/auth/disable-2fa", response_model=UserOut)
++def disable_2fa(user: dict = Depends(get_current_user)):
++    shared_db.set_2fa_enabled(user["id"], False)
++    user["totp_enabled"] = 0
++    return _user_out(user)
+ 
+ 
+ @router.post("/auth/register", response_model=LoginResponse)
+@@ -104,12 +164,9 @@ def register(req: RegisterRequest):
+         raise HTTPException(status_code=409, detail=err)
+     user = shared_db.get_user_by_email(req.email.strip().lower())
+     token = _make_token(user["id"])
+-    return LoginResponse(
+-        token=token,
+-        user=UserOut(id=user["id"], email=user["email"], name=user["full_name"], role=user["role"]),
+-    )
++    return LoginResponse(token=token, user=_user_out(user))
+ 
+ 
+ @router.get("/auth/me", response_model=UserOut)
+ def me(user: dict = Depends(get_current_user)):
+-    return UserOut(id=user["id"], email=user["email"], name=user["full_name"], role=user["role"])
++    return _user_out(user)
+diff --git a/routers/dashboard.py b/routers/dashboard.py
+index 9414f5a..6cdf6f5 100644
+--- a/routers/dashboard.py
++++ b/routers/dashboard.py
+@@ -8,9 +8,14 @@ from typing import Optional
+ import bcrypt
+ import pandas as pd
+ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
++from openpyxl.chart import BarChart, Reference
++from openpyxl.formatting.rule import DataBarRule
++from openpyxl.styles import Alignment, Font
++from openpyxl.utils import get_column_letter
+ from pydantic import BaseModel
+ 
+ import shared_db
++from core.reporter import FILL_ALT, FILL_NAVY, RED, THIN_BORDER, WHITE, _auto_width, _freeze
+ from routers.auth import get_current_user
+ 
+ router = APIRouter(prefix="/dashboard")
+@@ -126,6 +131,29 @@ def _normalise_listen_in(df: pd.DataFrame) -> list:
+     return records
+ 
+ 
++# ── Excel styling helper (reuses core/reporter.py palette + utilities) ─────────
++
++def _style_sheet(ws, header_row: int = 1, banding: bool = True):
++    """Apply navy/white header, alternating banding, freeze pane and auto-filter
++    to a worksheet that pandas has already written via to_excel()."""
++    if ws.max_row < 1 or ws.max_column < 1:
++        return
++    for col in range(1, ws.max_column + 1):
++        c = ws.cell(row=header_row, column=col)
++        c.font = Font(bold=True, color=WHITE)
++        c.fill = FILL_NAVY
++        c.border = THIN_BORDER
++        c.alignment = Alignment(horizontal="center", vertical="center")
++    if banding:
++        for r in range(header_row + 1, ws.max_row + 1):
++            if (r - header_row) % 2 == 0:
++                for col in range(1, ws.max_column + 1):
++                    ws.cell(row=r, column=col).fill = FILL_ALT
++    _freeze(ws, row=header_row + 1)
++    ws.auto_filter.ref = ws.dimensions
++    _auto_width(ws)
++
++
+ # ── Pydantic schemas ───────────────────────────────────────────────────────────
+ 
+ class CreateUserBody(BaseModel):
+@@ -488,6 +516,8 @@ def delete_upload(
+ ):
+     _require_db()
+     _require_admin(user)
++    if shared_db.is_upload_locked(upload_id):
++        raise HTTPException(status_code=403, detail="This upload is locked and cannot be deleted")
+     shared_db.delete_upload(upload_id, report_type)
+     return {"status": "ok"}
+ 
+@@ -540,6 +570,9 @@ def toggle_active(user_id: int, body: ToggleActiveBody, user: dict = Depends(get
+ def create_project_full(body: CreateProjectFullBody, user: dict = Depends(get_current_user)):
+     _require_db()
+     _require_admin(user)
++    existing = shared_db.get_project_by_name(body.name.strip())
++    if existing:
++        raise HTTPException(status_code=409, detail=f"A project named '{body.name.strip()}' already exists")
+     project_id = shared_db.create_project_full(
+         name=body.name,
+         client=body.client,
+@@ -737,6 +770,7 @@ def download_combined_report(project_id: int, user: dict = Depends(get_current_u
+             drop_cols = [c for c in ("id", "project_id", "upload_id", "uploaded_by", "extra_data") if c in df_q.columns]
+             df_q = df_q.drop(columns=drop_cols)
+             df_q.to_excel(w, index=False, sheet_name="Quality Report")
++            _style_sheet(w.sheets["Quality Report"])
+ 
+             # Flag summary
+             flag_summary = pd.DataFrame([{
+@@ -755,6 +789,20 @@ def download_combined_report(project_id: int, user: dict = Depends(get_current_u
+                 "Value": (df_q["straight_lining"] == "Flag").sum() if "straight_lining" in df_q.columns else 0,
+             }])
+             flag_summary.to_excel(w, index=False, sheet_name="QC Summary")
++            ws_sum = w.sheets["QC Summary"]
++            _style_sheet(ws_sum, banding=False)
++
++            chart = BarChart()
++            chart.type = "col"
++            chart.title = "QC Summary"
++            chart.y_axis.title = "Value"
++            chart.height = 9
++            chart.width = 16
++            data_ref = Reference(ws_sum, min_col=2, max_col=2, min_row=1, max_row=len(flag_summary) + 1)
++            cats_ref = Reference(ws_sum, min_col=1, min_row=2, max_row=len(flag_summary) + 1)
++            chart.add_data(data_ref, titles_from_data=True)
++            chart.set_categories(cats_ref)
++            ws_sum.add_chart(chart, "D2")
+         else:
+             pd.DataFrame({"Note": ["No quality records yet"]}).to_excel(w, index=False, sheet_name="Quality Report")
+ 
+@@ -764,6 +812,7 @@ def download_combined_report(project_id: int, user: dict = Depends(get_current_u
+             drop_cols = [c for c in ("id", "project_id", "upload_id", "uploaded_by") if c in df_b.columns]
+             df_b = df_b.drop(columns=drop_cols)
+             df_b.to_excel(w, index=False, sheet_name="Back-check")
++            _style_sheet(w.sheets["Back-check"])
+         else:
+             pd.DataFrame({"Note": ["No back-check records yet"]}).to_excel(w, index=False, sheet_name="Back-check")
+ 
+@@ -773,6 +822,7 @@ def download_combined_report(project_id: int, user: dict = Depends(get_current_u
+             drop_cols = [c for c in ("id", "project_id", "upload_id", "logged_by") if c in df_l.columns]
+             df_l = df_l.drop(columns=drop_cols)
+             df_l.to_excel(w, index=False, sheet_name="Listen-in")
++            _style_sheet(w.sheets["Listen-in"])
+         else:
+             pd.DataFrame({"Note": ["No listen-in records yet"]}).to_excel(w, index=False, sheet_name="Listen-in")
+ 
+@@ -788,6 +838,16 @@ def download_combined_report(project_id: int, user: dict = Depends(get_current_u
+                 ).reset_index()
+                 itv_summary.columns = ["Interviewer ID", "Interviews", "Duration Flags", "SL Flags", "Approved"]
+                 itv_summary.to_excel(w, index=False, sheet_name="Interviewers")
++                ws_itv = w.sheets["Interviewers"]
++                _style_sheet(ws_itv)
++                last_row = len(itv_summary) + 1
++                if last_row > 1:
++                    for col_name in ("Duration Flags", "SL Flags"):
++                        col_letter = get_column_letter(itv_summary.columns.get_loc(col_name) + 1)
++                        ws_itv.conditional_formatting.add(
++                            f"{col_letter}2:{col_letter}{last_row}",
++                            DataBarRule(start_type="min", end_type="max", color=RED),
++                        )
+ 
+     pname = (project.get("name") or "project").replace(" ", "_")[:30]
+     buf.seek(0)
+diff --git a/routers/projects.py b/routers/projects.py
+index 79932fd..dd0e0e7 100644
+--- a/routers/projects.py
++++ b/routers/projects.py
+@@ -24,6 +24,9 @@ class SaveQCRequest(BaseModel):
+     filename: str
+     wave_label: Optional[str] = None
+     job_id: Optional[str] = None
++    column_config: Optional[dict[str, str]] = None
++    interviewer_name_col: Optional[str] = None
++    interviewer_supervisor_col: Optional[str] = None
+ 
+ 
+ # Column map: uppercase source column → dashboard schema column
+@@ -32,6 +35,18 @@ _COL_MAP = {
+     "INSTANCE ID": "instance_id",
+     "INTERVIEWER_ID": "interviewer_id",
+     "INTERVIEWER ID": "interviewer_id",
++    "INTERVIEWER_CODE": "interviewer_id",
++    "INTERVIEWER CODE": "interviewer_id",
++    "INTCODE": "interviewer_id",
++    "INT_CODE": "interviewer_id",
++    "INT CODE": "interviewer_id",
++    "ENUMERATOR_ID": "interviewer_id",
++    "ENUMERATOR ID": "interviewer_id",
++    "ENUMERATOR_CODE": "interviewer_id",
++    "ENUMERATOR CODE": "interviewer_id",
++    "FIELDWORKER_ID": "interviewer_id",
++    "FIELDWORKER ID": "interviewer_id",
++    "INTERVIEWERID": "interviewer_id",
+     "INTERVIEW_DATE": "interview_date",
+     "INTERVIEW DATE": "interview_date",
+     "INTERVIEW_START_TIME": "start_time",
+@@ -61,16 +76,22 @@ _COL_MAP = {
+ }
+ 
+ 
+-def _df_to_quality_records(df: pd.DataFrame) -> list:
++def _df_to_quality_records(df: pd.DataFrame, column_config: Optional[dict] = None) -> list:
+     """Map any df_clean to quality_report_records-compatible dicts."""
+     upper_cols = {str(c).strip().upper(): c for c in df.columns}
+     std_dst = set(_COL_MAP.values())
+     records = []
++    overrides = {dst: src for dst, src in (column_config or {}).items() if src in df.columns}
+ 
+     for _, row in df.iterrows():
+         rec: dict = {}
+         mapped_orig: set = set()
+ 
++        for dst, src in overrides.items():
++            val = row[src]
++            rec[dst] = None if (isinstance(val, float) and pd.isna(val)) else val
++            mapped_orig.add(src)
++
+         for src_upper, dst in _COL_MAP.items():
+             if src_upper in upper_cols and dst not in rec:
+                 orig = upper_cols[src_upper]
+@@ -107,7 +128,7 @@ def create_project(req: CreateProjectRequest, user: dict = Depends(get_current_u
+         raise HTTPException(status_code=503, detail="Database not available")
+     existing = shared_db.get_project_by_name(req.name.strip())
+     if existing:
+-        return existing
++        raise HTTPException(status_code=409, detail=f"A project named '{req.name.strip()}' already exists")
+     project_id = shared_db.create_project(req.name.strip(), user["id"])
+     return shared_db.get_project(project_id)
+ 
+@@ -139,9 +160,27 @@ async def save_qc_results(
+ 
+     def _load_map():
+         df = DataCleaner().clean(DataLoader().load(str(file_path)))
+-        return _df_to_quality_records(df)
+-
+-    records = await loop.run_in_executor(None, _load_map)
++        recs = _df_to_quality_records(df, req.column_config)
++
++        # Build a code -> {name, supervisor} lookup for registry enrichment, if those
++        # columns were identified (they aren't part of quality_report_records itself).
++        enrich: dict[str, dict] = {}
++        name_col = req.interviewer_name_col
++        sup_col = req.interviewer_supervisor_col
++        if (name_col and name_col in df.columns) or (sup_col and sup_col in df.columns):
++            for rec, (_, row) in zip(recs, df.iterrows()):
++                code = rec.get("interviewer_id")
++                if not code:
++                    continue
++                entry = enrich.setdefault(str(code), {})
++                for col, key in ((name_col, "name"), (sup_col, "supervisor")):
++                    if col and col in df.columns and key not in entry:
++                        val = row[col]
++                        if not (isinstance(val, float) and pd.isna(val)) and str(val).strip():
++                            entry[key] = str(val).strip()
++        return recs, enrich
++
++    records, interviewer_enrichment = await loop.run_in_executor(None, _load_map)
+ 
+     # Overlay QC flags from the job results so dashboard shows real flag counts
+     if req.job_id:
+@@ -178,16 +217,30 @@ async def save_qc_results(
+     upload_id = shared_db.insert_quality_records(
+         project_id, user["id"], req.filename, records, req.wave_label
+     )
++    shared_db.lock_upload(upload_id)
+ 
+-    # Seed interviewer registry with any new codes found in this file
++    if req.column_config:
++        try:
++            shared_db.update_project(project_id, column_config=json.dumps(req.column_config))
++        except Exception:
++            pass
++
++    # Seed/enrich the cross-project interviewer registry with every code found in this file
++    codes_in_file = {str(r["interviewer_id"]) for r in records if r.get("interviewer_id")}
+     known_codes = shared_db.get_interviewer_code_set()
+-    new_codes = {
+-        str(r["interviewer_id"]) for r in records
+-        if r.get("interviewer_id") and str(r["interviewer_id"]) not in known_codes
+-    }
+-    for code in new_codes:
++    new_codes = codes_in_file - known_codes
++
++    supervisor_names = {e["supervisor"] for e in interviewer_enrichment.values() if e.get("supervisor")}
++    supervisor_ids = shared_db.upsert_supervisors_bulk(list(supervisor_names)) if supervisor_names else {}
++
++    for code in codes_in_file:
++        entry = interviewer_enrichment.get(code, {})
+         try:
+-            shared_db.upsert_interviewer(code)
++            shared_db.upsert_interviewer(
++                code,
++                name=entry.get("name"),
++                supervisor_id=supervisor_ids.get(entry.get("supervisor")) if entry.get("supervisor") else None,
++            )
+         except Exception:
+             pass
+ 
+@@ -196,5 +249,5 @@ async def save_qc_results(
+         "upload_id": upload_id,
+         "row_count": len(records),
+         "new_interviewers": len(new_codes),
+-        "known_interviewers": len(known_codes & {str(r.get("interviewer_id", "")) for r in records}),
++        "known_interviewers": len(codes_in_file & known_codes),
+     }
+diff --git a/shared_db.py b/shared_db.py
+index 15e9163..8fc325d 100644
+--- a/shared_db.py
++++ b/shared_db.py
+@@ -30,6 +30,17 @@ def db_available() -> bool:
+ 
+ # ── Internal helpers ───────────────────────────────────────────────────────────
+ 
++def _safe_add_column(conn, table: str, column: str, col_type: str):
++    """Add a column if it doesn't already exist. Safe to call repeatedly."""
++    try:
++        existing = [row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()]
++        if column not in existing:
++            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
++            conn.commit()
++    except Exception:
++        pass
++
++
+ def _log_upload(conn, upload_id, project_id, report_type, uploaded_by, filename, row_count, wave_label=None):
+     conn.execute(
+         """INSERT INTO upload_log (upload_id, project_id, report_type, uploaded_by, filename, row_count, wave_label)
+@@ -84,6 +95,30 @@ def create_user(email: str, password_hash: str, full_name: str, role: str, creat
+         conn.close()
+ 
+ 
++def set_user_otp(user_id: int, otp_hash: str, expires_at_iso: str):
++    conn = get_conn()
++    conn.execute(
++        "UPDATE users SET otp_code=?, otp_expires_at=? WHERE id=?",
++        (otp_hash, expires_at_iso, user_id),
++    )
++    conn.commit()
++    conn.close()
++
++
++def clear_user_otp(user_id: int):
++    conn = get_conn()
++    conn.execute("UPDATE users SET otp_code=NULL, otp_expires_at=NULL WHERE id=?", (user_id,))
++    conn.commit()
++    conn.close()
++
++
++def set_2fa_enabled(user_id: int, enabled: bool):
++    conn = get_conn()
++    conn.execute("UPDATE users SET totp_enabled=? WHERE id=?", (1 if enabled else 0, user_id))
++    conn.commit()
++    conn.close()
++
++
+ def update_user_role(user_id: int, role: str):
+     conn = get_conn()
+     conn.execute("UPDATE users SET role=? WHERE id=?", (role, user_id))
+@@ -177,7 +212,8 @@ def create_project_full(
+ def update_project(project_id: int, **kwargs):
+     allowed = {"name", "job_number", "client", "sample_target", "start_date", "end_date",
+                "status", "backcheck_target", "listenin_target", "accompaniment_target",
+-               "loi_min_minutes", "loi_pct_threshold", "flag_warning_pct", "flag_critical_pct"}
++               "loi_min_minutes", "loi_pct_threshold", "flag_warning_pct", "flag_critical_pct",
++               "column_config"}
+     fields = {k: v for k, v in kwargs.items() if k in allowed}
+     if not fields:
+         return
+@@ -471,6 +507,22 @@ def get_upload_log(project_id: Optional[int] = None) -> list:
+     return [dict(r) for r in rows]
+ 
+ 
++def lock_upload(upload_id: str):
++    conn = get_conn()
++    conn.execute("UPDATE upload_log SET is_locked=1 WHERE upload_id=?", (upload_id,))
++    conn.commit()
++    conn.close()
++
++
++def is_upload_locked(upload_id: str) -> bool:
++    if not db_available():
++        return False
++    conn = get_conn()
++    row = conn.execute("SELECT is_locked FROM upload_log WHERE upload_id=?", (upload_id,)).fetchone()
++    conn.close()
++    return bool(row and row["is_locked"])
++
++
+ def delete_upload(upload_id: str, report_type: str):
+     table_map = {
+         "quality_report": "quality_report_records",
+@@ -586,11 +638,219 @@ def get_dashboard_summary() -> list:
+ # ── Activity feed ──────────────────────────────────────────────────────────────
+ 
+ def init_tables():
+-    """Create extended tables and apply additive migrations."""
+-    if not db_available():
+-        return
++    """Create the full base schema (mirrors dashboard/database.py::init_db) plus
++    extended tables, and apply additive migrations. This is the only schema-init
++    path the FastAPI app runs, so it must be self-sufficient — it cannot assume
++    dashboard/database.py's init_db() has ever executed against this DB file."""
+     conn = get_conn()
+-    conn.execute("""
++    conn.executescript("""
++        CREATE TABLE IF NOT EXISTS users (
++            id INTEGER PRIMARY KEY AUTOINCREMENT,
++            email TEXT UNIQUE NOT NULL,
++            password_hash TEXT NOT NULL,
++            full_name TEXT NOT NULL,
++            role TEXT NOT NULL DEFAULT 'other',
++            is_active INTEGER DEFAULT 1,
++            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
++            created_by INTEGER REFERENCES users(id),
++            interviewer_code TEXT,
++            totp_enabled INTEGER DEFAULT 0,
++            otp_code TEXT,
++            otp_expires_at TEXT
++        );
++
++        CREATE TABLE IF NOT EXISTS projects (
++            id INTEGER PRIMARY KEY AUTOINCREMENT,
++            name TEXT NOT NULL,
++            job_number TEXT,
++            client TEXT,
++            sample_target INTEGER DEFAULT 0,
++            backcheck_target REAL DEFAULT 0.20,
++            listenin_target REAL DEFAULT 0.10,
++            accompaniment_target REAL DEFAULT 0.20,
++            loi_min_minutes REAL DEFAULT 0,
++            loi_pct_threshold REAL DEFAULT 0.50,
++            flag_warning_pct REAL DEFAULT 5.0,
++            flag_critical_pct REAL DEFAULT 10.0,
++            start_date DATE,
++            end_date DATE,
++            status TEXT DEFAULT 'active',
++            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
++            created_by INTEGER REFERENCES users(id),
++            column_config TEXT
++        );
++
++        CREATE TABLE IF NOT EXISTS project_assignments (
++            id INTEGER PRIMARY KEY AUTOINCREMENT,
++            project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
++            user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
++            assigned_by INTEGER REFERENCES users(id),
++            assigned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
++            UNIQUE(project_id, user_id)
++        );
++
++        CREATE TABLE IF NOT EXISTS quality_report_records (
++            id INTEGER PRIMARY KEY AUTOINCREMENT,
++            project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
++            upload_id TEXT NOT NULL,
++            uploaded_by INTEGER REFERENCES users(id),
++            upload_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
++            instance_id TEXT,
++            interviewer_id TEXT,
++            interview_date DATE,
++            start_time TEXT,
++            end_time TEXT,
++            duration_minutes REAL,
++            duration_validation TEXT,
++            duration_flag TEXT,
++            straight_lining TEXT,
++            long_pause TEXT,
++            gps_status TEXT,
++            phone_present TEXT,
++            audio_present TEXT,
++            region TEXT,
++            location TEXT,
++            sample_point_id TEXT,
++            approval_status TEXT,
++            qc_comments TEXT,
++            extra_data TEXT
++        );
++
++        CREATE TABLE IF NOT EXISTS listen_in_records (
++            id INTEGER PRIMARY KEY AUTOINCREMENT,
++            project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
++            upload_id TEXT,
++            logged_by INTEGER REFERENCES users(id),
++            log_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
++            instance_id TEXT,
++            interviewer_id TEXT,
++            region TEXT,
++            listen_date DATE,
++            listen_type TEXT,
++            result TEXT,
++            issues_noted TEXT,
++            action_taken TEXT
++        );
++
++        CREATE TABLE IF NOT EXISTS backcheck_records (
++            id INTEGER PRIMARY KEY AUTOINCREMENT,
++            project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
++            upload_id TEXT NOT NULL,
++            uploaded_by INTEGER REFERENCES users(id),
++            upload_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
++            bc_instance_id TEXT,
++            original_instance_id TEXT,
++            interview_status TEXT,
++            region TEXT,
++            location TEXT,
++            sample_point_id TEXT,
++            backchecker_id TEXT,
++            interviewer_id TEXT,
++            script_name TEXT,
++            interview_date DATE,
++            interview_start_time TEXT,
++            backcheck_date DATE,
++            backcheck_time TEXT,
++            error_01 INTEGER DEFAULT 0,
++            error_02 INTEGER DEFAULT 0,
++            error_03 INTEGER DEFAULT 0,
++            error_04 INTEGER DEFAULT 0,
++            error_05 INTEGER DEFAULT 0,
++            error_06 INTEGER DEFAULT 0,
++            error_07 INTEGER DEFAULT 0,
++            error_08 INTEGER DEFAULT 0,
++            error_09 INTEGER DEFAULT 0,
++            error_10 INTEGER DEFAULT 0,
++            error_11 INTEGER DEFAULT 0,
++            error_12 INTEGER DEFAULT 0,
++            error_13 INTEGER DEFAULT 0
++        );
++
++        CREATE TABLE IF NOT EXISTS cancelled_interview_records (
++            id INTEGER PRIMARY KEY AUTOINCREMENT,
++            project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
++            upload_id TEXT NOT NULL,
++            uploaded_by INTEGER REFERENCES users(id),
++            upload_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
++            instance_id TEXT,
++            region TEXT,
++            location TEXT,
++            sample_point_id TEXT,
++            interviewer_id TEXT,
++            script_name TEXT,
++            interview_date DATE,
++            start_time TEXT,
++            end_time TEXT,
++            interview_length REAL,
++            active_length REAL,
++            avg_length_sample_point REAL,
++            avg_length_region REAL,
++            avg_length_project REAL,
++            idle_time REAL,
++            gap_to_last REAL,
++            same_day_finish TEXT,
++            qf_a TEXT,
++            qf_b TEXT,
++            qf_c TEXT,
++            qf_d TEXT,
++            qf_e TEXT,
++            qf_f TEXT,
++            interviewer_performance TEXT,
++            backcheck_result_telephone TEXT,
++            backcheck_result_f2f TEXT,
++            backcheck_result_independent TEXT
++        );
++
++        CREATE TABLE IF NOT EXISTS performance_records (
++            id INTEGER PRIMARY KEY AUTOINCREMENT,
++            project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
++            upload_id TEXT NOT NULL,
++            uploaded_by INTEGER REFERENCES users(id),
++            upload_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
++            interviewer_id TEXT,
++            region TEXT,
++            first_interview DATE,
++            last_interview DATE,
++            interview_completes INTEGER DEFAULT 0,
++            followup_completes INTEGER DEFAULT 0,
++            ecs_completes INTEGER DEFAULT 0,
++            work_summary INTEGER DEFAULT 0,
++            accompaniments INTEGER DEFAULT 0,
++            cancelled_interviews INTEGER DEFAULT 0,
++            backcheck_telephone_created INTEGER DEFAULT 0,
++            backcheck_f2f_created INTEGER DEFAULT 0,
++            backcheck_f2f_infield INTEGER DEFAULT 0,
++            backcheck_total INTEGER DEFAULT 0,
++            backcheck_completed INTEGER DEFAULT 0
++        );
++
++        CREATE TABLE IF NOT EXISTS timing_records (
++            id INTEGER PRIMARY KEY AUTOINCREMENT,
++            project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
++            upload_id TEXT NOT NULL,
++            uploaded_by INTEGER REFERENCES users(id),
++            upload_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
++            instance_id TEXT,
++            interviewer_id TEXT,
++            region TEXT,
++            interview_date DATE,
++            duration_minutes REAL
++        );
++
++        CREATE TABLE IF NOT EXISTS upload_log (
++            id INTEGER PRIMARY KEY AUTOINCREMENT,
++            upload_id TEXT NOT NULL,
++            project_id INTEGER REFERENCES projects(id),
++            report_type TEXT NOT NULL,
++            uploaded_by INTEGER REFERENCES users(id),
++            upload_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
++            filename TEXT,
++            row_count INTEGER DEFAULT 0,
++            notes TEXT,
++            wave_label TEXT,
++            is_locked INTEGER DEFAULT 0
++        );
++
+         CREATE TABLE IF NOT EXISTS supervisors (
+             id INTEGER PRIMARY KEY AUTOINCREMENT,
+             name TEXT NOT NULL,
+@@ -598,9 +858,8 @@ def init_tables():
+             phone TEXT,
+             region TEXT,
+             created_at TEXT DEFAULT (datetime('now'))
+-        )
+-    """)
+-    conn.execute("""
++        );
++
+         CREATE TABLE IF NOT EXISTS interviewers (
+             id INTEGER PRIMARY KEY AUTOINCREMENT,
+             interviewer_code TEXT UNIQUE NOT NULL,
+@@ -609,14 +868,41 @@ def init_tables():
+             region TEXT,
+             is_active INTEGER DEFAULT 1,
+             created_at TEXT DEFAULT (datetime('now'))
+-        )
++        );
+     """)
+-    # Additive migrations — safe to run repeatedly
+-    try:
+-        conn.execute("ALTER TABLE users ADD COLUMN interviewer_code TEXT")
+-    except Exception:
+-        pass
+     conn.commit()
++
++    # Additive migrations — safe to run repeatedly, cover DBs created before
++    # any of the columns above were part of the initial CREATE TABLE.
++    _safe_add_column(conn, "users", "interviewer_code", "TEXT")
++    _safe_add_column(conn, "users", "totp_enabled", "INTEGER DEFAULT 0")
++    _safe_add_column(conn, "users", "otp_code", "TEXT")
++    _safe_add_column(conn, "users", "otp_expires_at", "TEXT")
++    _safe_add_column(conn, "projects", "column_config", "TEXT")
++    _safe_add_column(conn, "projects", "job_number", "TEXT")
++    _safe_add_column(conn, "projects", "loi_min_minutes", "REAL DEFAULT 0")
++    _safe_add_column(conn, "projects", "loi_pct_threshold", "REAL DEFAULT 0.50")
++    _safe_add_column(conn, "projects", "flag_warning_pct", "REAL DEFAULT 5.0")
++    _safe_add_column(conn, "projects", "flag_critical_pct", "REAL DEFAULT 10.0")
++    _safe_add_column(conn, "quality_report_records", "extra_data", "TEXT")
++    _safe_add_column(conn, "upload_log", "notes", "TEXT")
++    _safe_add_column(conn, "upload_log", "wave_label", "TEXT")
++    _safe_add_column(conn, "upload_log", "is_locked", "INTEGER DEFAULT 0")
++    conn.commit()
++
++    # Seed a default admin if no users exist at all — otherwise a fresh
++    # FastAPI-only deployment has no way to ever create an admin account,
++    # since /auth/register always assigns the 'other' role.
++    existing = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
++    if existing == 0:
++        import bcrypt
++        pw = bcrypt.hashpw(b"admin1234", bcrypt.gensalt()).decode()
++        conn.execute(
++            "INSERT INTO users (email, password_hash, full_name, role) VALUES (?,?,?,?)",
++            ("admin@servallab.com", pw, "System Admin", "qc_executive"),
++        )
++        conn.commit()
++
+     conn.close()
+ 
+ 

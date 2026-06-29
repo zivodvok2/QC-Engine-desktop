@@ -22,7 +22,7 @@ import { OnboardingTooltip } from './components/onboarding/OnboardingTooltip'
 import { SettingsPanel } from './components/settings/SettingsPanel'
 import { LoginModal } from './components/auth/LoginModal'
 import { Dashboard } from './components/dashboard/Dashboard'
-import { useAppStore } from './store/appStore'
+import { useAppStore, IS_DASHBOARD_DOMAIN } from './store/appStore'
 
 const qc = new QueryClient({
   defaultOptions: { queries: { retry: 1, refetchOnWindowFocus: false } },
@@ -161,11 +161,6 @@ function TabContent() {
   )
 }
 
-const IS_DASHBOARD_DOMAIN = typeof window !== 'undefined' && (
-  window.location.hostname.includes('dashboard.') ||
-  new URLSearchParams(window.location.search).get('mode') === 'dashboard'
-)
-
 function AppShell() {
   const { fileId, activeTab, demosOpen, settingsOpen, loginOpen, openSettings, closeSettings, dashboardMode, setDashboardMode } = useAppStore()
 
@@ -176,13 +171,10 @@ function AppShell() {
   return (
     <div className="flex h-full">
       {dashboardMode ? (
-        <>
-          <div className="flex-1 flex flex-col overflow-hidden">
-            <Header onSettings={openSettings} />
-            <Dashboard />
-          </div>
-          {loginOpen && <LoginModal />}
-        </>
+        <div className="flex-1 flex flex-col overflow-hidden">
+          <Header onSettings={openSettings} />
+          <Dashboard />
+        </div>
       ) : (
         <>
           <Sidebar />
@@ -196,11 +188,11 @@ function AppShell() {
               </main>
             )}
           </div>
-          {settingsOpen && <SettingsPanel onClose={closeSettings} />}
           {demosOpen && !fileId && <DemosModal />}
-          {loginOpen && <LoginModal />}
         </>
       )}
+      {settingsOpen && <SettingsPanel onClose={closeSettings} />}
+      {loginOpen && <LoginModal />}
     </div>
   )
 }
