@@ -48,7 +48,7 @@ function ConfigProfiles() {
       {/* Template + Import */}
       <div className="flex flex-wrap gap-2">
         <button
-          onClick={() => downloadJson(BLANK_TEMPLATE, 'servallab-config-template.json')}
+          onClick={() => downloadJson(BLANK_TEMPLATE, 'qcengine-config-template.json')}
           className="btn-ghost flex items-center gap-1.5 text-xs"
         >
           <Download size={12} />
@@ -132,7 +132,7 @@ function ConfigProfiles() {
 
       {/* Export current */}
       <button
-        onClick={() => downloadJson(config, 'servallab-config.json')}
+        onClick={() => downloadJson(config, 'qcengine-config.json')}
         className="text-[10px] text-muted hover:text-tx transition-colors flex items-center gap-1"
       >
         <Download size={10} />

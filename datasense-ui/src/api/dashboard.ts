@@ -160,6 +160,42 @@ export interface InterviewerMetrics {
   by_project: { project_name: string; project_id: number; interviews: number; dur_flags: number; sl_flags: number; approved: number }[]
 }
 
+export interface ItvAnalyticsRow {
+  code: string
+  name: string | null
+  supervisor_name: string | null
+  supervisor_id: number | null
+  region: string | null
+  is_active: number
+  total_interviews: number
+  duration_flags: number
+  sl_flags: number
+  approved: number
+  cancelled: number
+  avg_duration: number
+  bc_count: number
+  bc_errors: number
+  li_count: number
+  li_pass: number
+  li_fail: number
+  flag_rate: number
+}
+
+export interface SupAnalyticsRow {
+  supervisor_name: string
+  interviewer_count: number
+  total_interviews: number
+  total_flags: number
+  flag_rate: number
+  bc_errors: number
+}
+
+export interface InterviewerAnalytics {
+  interviewers: ItvAnalyticsRow[]
+  by_supervisor: SupAnalyticsRow[]
+  projects: { id: number; name: string }[]
+}
+
 export interface ManualListenInBody {
   instance_id?: string
   interviewer_id: string
@@ -415,6 +451,56 @@ export async function getInterviewerMetrics(code: string, token: string): Promis
     headers: authHeader(token),
   })
   return data
+}
+
+export async function getInterviewerAnalytics(
+  token: string,
+  params?: { project_id?: number; supervisor_id?: number; region?: string },
+): Promise<InterviewerAnalytics> {
+  const p = new URLSearchParams()
+  if (params?.project_id) p.set('project_id', String(params.project_id))
+  if (params?.supervisor_id) p.set('supervisor_id', String(params.supervisor_id))
+  if (params?.region) p.set('region', params.region)
+  const qs = p.toString() ? `?${p.toString()}` : ''
+  const { data } = await client.get<InterviewerAnalytics>(`/api/dashboard/interviewers/analytics${qs}`, {
+    headers: authHeader(token),
+  })
+  return data
+}
+
+export function buildExportUrl(
+  token: string,
+  params?: { project_id?: number; supervisor_id?: number; region?: string },
+): string {
+  const p = new URLSearchParams()
+  if (params?.project_id) p.set('project_id', String(params.project_id))
+  if (params?.supervisor_id) p.set('supervisor_id', String(params.supervisor_id))
+  if (params?.region) p.set('region', params.region)
+  const qs = p.toString() ? `?${p.toString()}` : ''
+  return `/api/dashboard/interviewers/export${qs}`
+}
+
+export async function downloadInterviewerReport(
+  token: string,
+  params?: { project_id?: number; supervisor_id?: number; region?: string },
+): Promise<void> {
+  const p = new URLSearchParams()
+  if (params?.project_id) p.set('project_id', String(params.project_id))
+  if (params?.supervisor_id) p.set('supervisor_id', String(params.supervisor_id))
+  if (params?.region) p.set('region', params.region)
+  const qs = p.toString() ? `?${p.toString()}` : ''
+  const resp = await client.get(`/api/dashboard/interviewers/export${qs}`, {
+    headers: authHeader(token),
+    responseType: 'blob',
+  })
+  const url = URL.createObjectURL(new Blob([resp.data]))
+  const a = document.createElement('a')
+  a.href = url
+  const cd = (resp.headers['content-disposition'] as string | undefined) ?? ''
+  const match = cd.match(/filename="([^"]+)"/)
+  a.download = match?.[1] ?? 'interviewer_report.xlsx'
+  a.click()
+  URL.revokeObjectURL(url)
 }
 
 // Templates

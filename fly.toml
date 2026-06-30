@@ -1,4 +1,4 @@
-app = "servallab-api"
+app = "ipsos-qc-engine-api"
 primary_region = "iad"
 
 [build]

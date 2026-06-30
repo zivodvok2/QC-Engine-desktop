@@ -14,11 +14,11 @@ const GROQ_MODELS = [
 ]
 
 const ACCENT_OPTIONS: { name: 'emerald' | 'blue' | 'purple' | 'orange' | 'pink'; hex: string }[] = [
-  { name: 'emerald', hex: '#4af0a0' },
-  { name: 'blue',    hex: '#4a9ef0' },
-  { name: 'purple',  hex: '#a078f0' },
-  { name: 'orange',  hex: '#f09040' },
-  { name: 'pink',    hex: '#f04a90' },
+  { name: 'emerald', hex: '#00B5A3' },
+  { name: 'blue',    hex: '#1B2A4A' },
+  { name: 'purple',  hex: '#1B2A4A' },
+  { name: 'orange',  hex: '#1B2A4A' },
+  { name: 'pink',    hex: '#00B5A3' },
 ]
 
 function Accordion({ label, children }: { label: string; children: React.ReactNode }) {

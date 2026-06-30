@@ -3,7 +3,7 @@ import { X } from 'lucide-react'
 import { ONBOARDING_STEPS } from '../../data/onboarding'
 import { useAppStore } from '../../store/appStore'
 
-const STORAGE_KEY = 'servallab_onboarding_done'
+const STORAGE_KEY = 'qcengine_onboarding_done'
 
 export function OnboardingTooltip() {
   const dashboardMode = useAppStore((s) => s.dashboardMode)

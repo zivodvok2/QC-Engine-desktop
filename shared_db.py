@@ -899,7 +899,7 @@ def init_tables():
         pw = bcrypt.hashpw(b"admin1234", bcrypt.gensalt()).decode()
         conn.execute(
             "INSERT INTO users (email, password_hash, full_name, role) VALUES (?,?,?,?)",
-            ("admin@servallab.com", pw, "System Admin", "qc_executive"),
+            ("admin@example.com", pw, "System Admin", "qc_executive"),
         )
         conn.commit()
 
@@ -1155,6 +1155,106 @@ def get_interviewer_metrics(interviewer_code: str) -> dict:
         "listen_in": dict(li) if li else {},
         "by_project": [dict(r) for r in by_project],
     }
+
+
+def get_interviewer_analytics(
+    project_id: Optional[int] = None,
+    supervisor_id: Optional[int] = None,
+    region: Optional[str] = None,
+) -> dict:
+    """All interviewers with aggregated metrics in one query. Filterable by project/supervisor/region."""
+    if not db_available():
+        return {"interviewers": [], "by_supervisor": [], "projects": []}
+
+    conn = get_conn()
+    pfilter = "AND project_id = ?" if project_id else ""
+    parg: list = [project_id] if project_id else []
+
+    where_parts: list[str] = []
+    where_args: list = []
+    if supervisor_id is not None:
+        where_parts.append("i.supervisor_id = ?")
+        where_args.append(supervisor_id)
+    if region:
+        where_parts.append("i.region = ?")
+        where_args.append(region)
+    where_clause = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
+
+    sql = f"""
+        WITH qr AS (
+            SELECT interviewer_id,
+                   COUNT(*) AS total_interviews,
+                   SUM(CASE WHEN duration_flag='Flag' THEN 1 ELSE 0 END) AS duration_flags,
+                   SUM(CASE WHEN straight_lining='Flag' THEN 1 ELSE 0 END) AS sl_flags,
+                   SUM(CASE WHEN approval_status='Approved' THEN 1 ELSE 0 END) AS approved,
+                   SUM(CASE WHEN approval_status='Cancelled' THEN 1 ELSE 0 END) AS cancelled,
+                   AVG(duration_minutes) AS avg_duration
+            FROM quality_report_records WHERE 1=1 {pfilter}
+            GROUP BY interviewer_id
+        ),
+        bc AS (
+            SELECT interviewer_id,
+                   COUNT(*) AS bc_count,
+                   COALESCE(SUM(error_01+error_02+error_03+error_04+error_05+error_06+error_07+
+                                error_08+error_09+error_10+error_11+error_12+error_13), 0) AS bc_errors
+            FROM backcheck_records WHERE 1=1 {pfilter}
+            GROUP BY interviewer_id
+        ),
+        li AS (
+            SELECT interviewer_id,
+                   COUNT(*) AS li_count,
+                   SUM(CASE WHEN result='Pass' THEN 1 ELSE 0 END) AS li_pass,
+                   SUM(CASE WHEN result='Fail' THEN 1 ELSE 0 END) AS li_fail
+            FROM listen_in_records WHERE 1=1 {pfilter}
+            GROUP BY interviewer_id
+        )
+        SELECT i.interviewer_code AS code, i.name, i.region, i.supervisor_id, i.is_active,
+               s.name AS supervisor_name,
+               COALESCE(qr.total_interviews, 0) AS total_interviews,
+               COALESCE(qr.duration_flags, 0) AS duration_flags,
+               COALESCE(qr.sl_flags, 0) AS sl_flags,
+               COALESCE(qr.approved, 0) AS approved,
+               COALESCE(qr.cancelled, 0) AS cancelled,
+               ROUND(COALESCE(qr.avg_duration, 0), 1) AS avg_duration,
+               COALESCE(bc.bc_count, 0) AS bc_count,
+               COALESCE(bc.bc_errors, 0) AS bc_errors,
+               COALESCE(li.li_count, 0) AS li_count,
+               COALESCE(li.li_pass, 0) AS li_pass,
+               COALESCE(li.li_fail, 0) AS li_fail,
+               CASE WHEN COALESCE(qr.total_interviews, 0) > 0
+                    THEN ROUND((COALESCE(qr.duration_flags,0)+COALESCE(qr.sl_flags,0))*100.0/qr.total_interviews,1)
+                    ELSE 0 END AS flag_rate
+        FROM interviewers i
+        LEFT JOIN supervisors s ON i.supervisor_id = s.id
+        LEFT JOIN qr ON qr.interviewer_id = i.interviewer_code
+        LEFT JOIN bc ON bc.interviewer_id = i.interviewer_code
+        LEFT JOIN li ON li.interviewer_id = i.interviewer_code
+        {where_clause}
+        ORDER BY flag_rate DESC, total_interviews DESC
+    """
+
+    rows = conn.execute(sql, parg + parg + parg + where_args).fetchall()
+    interviewers = [dict(r) for r in rows]
+
+    # Supervisor-level aggregates derived from the filtered result
+    sup_map: dict = {}
+    for r in interviewers:
+        sn = r.get("supervisor_name") or "Unassigned"
+        e = sup_map.setdefault(sn, {"supervisor_name": sn, "interviewer_count": 0,
+                                     "total_interviews": 0, "total_flags": 0, "bc_errors": 0})
+        e["interviewer_count"] += 1
+        e["total_interviews"] += r["total_interviews"]
+        e["total_flags"] += r["duration_flags"] + r["sl_flags"]
+        e["bc_errors"] += r["bc_errors"]
+    by_supervisor = []
+    for s in sup_map.values():
+        s["flag_rate"] = round(s["total_flags"] * 100 / s["total_interviews"], 1) if s["total_interviews"] else 0
+        by_supervisor.append(s)
+    by_supervisor.sort(key=lambda x: x["flag_rate"], reverse=True)
+
+    projects = [dict(r) for r in conn.execute("SELECT id, name FROM projects ORDER BY name").fetchall()]
+    conn.close()
+    return {"interviewers": interviewers, "by_supervisor": by_supervisor, "projects": projects}
 
 
 # ── Activity feed ──────────────────────────────────────────────────────────────

@@ -30,3 +30,21 @@ outputs/
 # Dashboard SQLite DB
 dashboard/qc_dashboard.db
 .aider*
+
+# Claude Code tooling
+.claude/
+
+# Dev session notes
+CHANGES_SESSION_*.md
+ARCHITECTURE_PROMPT.md
+
+# Patch files
+*.patch
+
+# Frontend build artifacts — run `npm run build` to regenerate
+datasense-ui/dist/
+
+# Environment files — copy .env.example files and fill in values
+.env.local
+datasense-ui/.env.production
+datasense-ui/.env.local

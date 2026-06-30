@@ -236,7 +236,7 @@ def init_db():
         pw = bcrypt.hashpw(b"admin1234", bcrypt.gensalt()).decode()
         c.execute(
             "INSERT INTO users (email, password_hash, full_name, role) VALUES (?,?,?,?)",
-            ("admin@servallab.com", pw, "System Admin", "qc_executive"),
+            ("admin@example.com", pw, "System Admin", "qc_executive"),
         )
         conn.commit()
 
@@ -1007,3 +1007,56 @@ def get_project_activity(project_id=None, limit=20) -> list[dict]:
         ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+
+def upsert_supervisors_bulk(names: list) -> dict:
+    """Find-or-create supervisors by name. Returns {name: id} mapping."""
+    if not names:
+        return {}
+    conn = get_conn()
+    result: dict = {}
+    for raw in names:
+        name = str(raw).strip()
+        if not name or name.lower() in ("none", "null", "nan", ""):
+            continue
+        existing = conn.execute("SELECT id FROM supervisors WHERE name=?", (name,)).fetchone()
+        if existing:
+            result[name] = existing["id"]
+        else:
+            cur = conn.execute("INSERT INTO supervisors (name) VALUES (?)", (name,))
+            result[name] = cur.lastrowid
+    conn.commit()
+    conn.close()
+    return result
+
+
+def upsert_interviewer(
+    interviewer_code: str,
+    name: str = None,
+    supervisor_id: int = None,
+    region: str = None,
+    is_active: int = 1,
+) -> int:
+    conn = get_conn()
+    existing = conn.execute(
+        "SELECT id FROM interviewers WHERE interviewer_code=?", (interviewer_code,)
+    ).fetchone()
+    if existing:
+        conn.execute(
+            """UPDATE interviewers
+               SET name=COALESCE(?,name), supervisor_id=COALESCE(?,supervisor_id),
+                   region=COALESCE(?,region), is_active=?
+               WHERE interviewer_code=?""",
+            (name, supervisor_id, region, is_active, interviewer_code),
+        )
+        row_id = existing["id"]
+    else:
+        cur = conn.execute(
+            """INSERT INTO interviewers (interviewer_code, name, supervisor_id, region, is_active)
+               VALUES (?,?,?,?,?)""",
+            (interviewer_code, name, supervisor_id, region, is_active),
+        )
+        row_id = cur.lastrowid
+    conn.commit()
+    conn.close()
+    return row_id

@@ -1,4 +1,4 @@
-app = "servallab-dashboard"
+app = "ipsos-qc-engine-dashboard"
 primary_region = "iad"
 
 [build]

@@ -25,6 +25,8 @@ class SaveQCRequest(BaseModel):
     wave_label: Optional[str] = None
     job_id: Optional[str] = None
     column_config: Optional[dict[str, str]] = None
+    interviewer_name_col: Optional[str] = None
+    interviewer_supervisor_col: Optional[str] = None
 
 
 # Column map: uppercase source column → dashboard schema column
@@ -60,6 +62,26 @@ _COL_MAP = {
     "APPROVAL_STATUS": "approval_status",
     "QC_COMMENTS": "qc_comments",
 }
+
+# Header aliases for interviewer name / supervisor columns — used to auto-detect
+# registry-enrichment columns when the caller doesn't explicitly pick them.
+_INTERVIEWER_NAME_ALIASES = {
+    "INTERVIEWER_NAME", "INTERVIEWER NAME",
+    "ENUMERATOR_NAME", "ENUMERATOR NAME",
+    "FIELDWORKER_NAME", "FIELDWORKER NAME",
+    "INT_NAME", "INT NAME", "INTNAME",
+}
+_SUPERVISOR_ALIASES = {
+    "SUPERVISOR", "SUPERVISOR_NAME", "SUPERVISOR NAME",
+    "TEAM_LEADER", "TEAM LEADER", "FIELD_SUPERVISOR", "FIELD SUPERVISOR",
+}
+
+
+def _find_alias_col(upper_cols: dict, aliases: set) -> Optional[str]:
+    for alias in aliases:
+        if alias in upper_cols:
+            return upper_cols[alias]
+    return None
 
 
 def _df_to_quality_records(df: pd.DataFrame, column_config: Optional[dict] = None) -> list:
@@ -146,9 +168,30 @@ async def save_qc_results(
 
     def _load_map():
         df = DataCleaner().clean(DataLoader().load(str(file_path)))
-        return _df_to_quality_records(df, req.column_config)
+        recs = _df_to_quality_records(df, req.column_config)
+        upper_cols = {str(c).strip().upper(): c for c in df.columns}
 
-    records = await loop.run_in_executor(None, _load_map)
+        # Build a code -> {name, supervisor} lookup for registry enrichment, if those
+        # columns were identified (they aren't part of quality_report_records itself).
+        # Explicit caller-supplied columns win; otherwise fall back to alias detection
+        # so callers like the embedded Data tab (which never pick columns) still enrich.
+        enrich: dict[str, dict] = {}
+        name_col = req.interviewer_name_col or _find_alias_col(upper_cols, _INTERVIEWER_NAME_ALIASES)
+        sup_col = req.interviewer_supervisor_col or _find_alias_col(upper_cols, _SUPERVISOR_ALIASES)
+        if (name_col and name_col in df.columns) or (sup_col and sup_col in df.columns):
+            for rec, (_, row) in zip(recs, df.iterrows()):
+                code = rec.get("interviewer_id")
+                if not code:
+                    continue
+                entry = enrich.setdefault(str(code), {})
+                for col, key in ((name_col, "name"), (sup_col, "supervisor")):
+                    if col and col in df.columns and key not in entry:
+                        val = row[col]
+                        if not (isinstance(val, float) and pd.isna(val)) and str(val).strip():
+                            entry[key] = str(val).strip()
+        return recs, enrich
+
+    records, interviewer_enrichment = await loop.run_in_executor(None, _load_map)
 
     # Overlay QC flags from the job results so dashboard shows real flag counts
     if req.job_id:
@@ -193,15 +236,22 @@ async def save_qc_results(
         except Exception:
             pass
 
-    # Seed interviewer registry with any new codes found in this file
+    # Seed/enrich the cross-project interviewer registry with every code found in this file
+    codes_in_file = {str(r["interviewer_id"]) for r in records if r.get("interviewer_id")}
     known_codes = shared_db.get_interviewer_code_set()
-    new_codes = {
-        str(r["interviewer_id"]) for r in records
-        if r.get("interviewer_id") and str(r["interviewer_id"]) not in known_codes
-    }
-    for code in new_codes:
+    new_codes = codes_in_file - known_codes
+
+    supervisor_names = {e["supervisor"] for e in interviewer_enrichment.values() if e.get("supervisor")}
+    supervisor_ids = shared_db.upsert_supervisors_bulk(list(supervisor_names)) if supervisor_names else {}
+
+    for code in codes_in_file:
+        entry = interviewer_enrichment.get(code, {})
         try:
-            shared_db.upsert_interviewer(code)
+            shared_db.upsert_interviewer(
+                code,
+                name=entry.get("name"),
+                supervisor_id=supervisor_ids.get(entry.get("supervisor")) if entry.get("supervisor") else None,
+            )
         except Exception:
             pass
 

@@ -15,12 +15,12 @@ import type { EDAResponse, EDABarData, EDAHeatmap } from '../../types'
 
 const CHART_TYPES = ['bar', 'line', 'scatter', 'histogram', 'heatmap', 'box'] as const
 const AGG_FUNCS = ['mean', 'sum', 'count', 'min', 'max']
-const ACCENT_COLORS = ['#4af0a0', '#4a9ef0', '#f0c04a', '#f04a6a', '#c04af0', '#f08a4a']
+const ACCENT_COLORS = ['#00B5A3', '#1B2A4A', '#00B5A3', '#1B2A4A', '#1B2A4A', '#00B5A3']
 
 const TOOLTIP_STYLE = {
-  contentStyle: { background: '#111318', border: '1px solid #1f2330', borderRadius: 6 },
-  labelStyle: { color: '#e8eaf2' },
-  itemStyle: { color: '#4af0a0' },
+  contentStyle: { background: '#FFFFFF', border: '1px solid #E2E6ED', borderRadius: 6 },
+  labelStyle: { color: '#1B2A4A' },
+  itemStyle: { color: '#00B5A3' },
 }
 
 function HeatmapChart({ data }: { data: EDAHeatmap }) {
@@ -31,7 +31,7 @@ function HeatmapChart({ data }: { data: EDAHeatmap }) {
   const labelH = 24
 
   const getColor = (v: number | null) => {
-    if (v === null) return '#1f2330'
+    if (v === null) return '#E2E6ED'
     if (v >= 0) return `rgba(74,240,160,${Math.min(Math.abs(v), 1)})`
     return `rgba(240,74,106,${Math.min(Math.abs(v), 1)})`
   }
@@ -41,14 +41,14 @@ function HeatmapChart({ data }: { data: EDAHeatmap }) {
       <svg width={labelW + n * cell} height={labelH + n * cell + 20}>
         {/* Column labels */}
         {columns.map((col, j) => (
-          <text key={col} x={labelW + j * cell + cell / 2} y={labelH - 4} fill="#8b90a8" fontSize={10}
+          <text key={col} x={labelW + j * cell + cell / 2} y={labelH - 4} fill="#6B7280" fontSize={10}
             textAnchor="middle" transform={`rotate(-40,${labelW + j * cell + cell / 2},${labelH - 4})`}>
             {col.length > 10 ? col.slice(0, 10) + '…' : col}
           </text>
         ))}
         {/* Row labels */}
         {columns.map((col, i) => (
-          <text key={col} x={labelW - 4} y={labelH + i * cell + cell / 2 + 4} fill="#8b90a8" fontSize={10} textAnchor="end">
+          <text key={col} x={labelW - 4} y={labelH + i * cell + cell / 2 + 4} fill="#6B7280" fontSize={10} textAnchor="end">
             {col.length > 12 ? col.slice(0, 12) + '…' : col}
           </text>
         ))}
@@ -60,7 +60,7 @@ function HeatmapChart({ data }: { data: EDAHeatmap }) {
                 fill={getColor(val)} rx={2} />
               {val !== null && (
                 <text x={labelW + j * cell + cell / 2} y={labelH + i * cell + cell / 2 + 4}
-                  fill="#e8eaf2" fontSize={9} textAnchor="middle">
+                  fill="#1B2A4A" fontSize={9} textAnchor="middle">
                   {val.toFixed(2)}
                 </text>
               )}
@@ -139,11 +139,11 @@ function ChartRenderer({ res }: { res: EDAResponse }) {
     return (
       <ResponsiveContainer width="100%" height={280}>
         <BarChart data={arr} margin={{ top: 4, right: 8, left: 0, bottom: 40 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#1f2330" />
-          <XAxis dataKey="bin" tick={{ fill: '#8b90a8', fontSize: 10 }} angle={-35} textAnchor="end" interval={0} />
-          <YAxis tick={{ fill: '#8b90a8', fontSize: 11 }} />
+          <CartesianGrid strokeDasharray="3 3" stroke="#E2E6ED" />
+          <XAxis dataKey="bin" tick={{ fill: '#6B7280', fontSize: 10 }} angle={-35} textAnchor="end" interval={0} />
+          <YAxis tick={{ fill: '#6B7280', fontSize: 11 }} />
           <Tooltip {...TOOLTIP_STYLE} />
-          <Bar dataKey="count" fill="#4af0a0" radius={[3, 3, 0, 0]} />
+          <Bar dataKey="count" fill="#00B5A3" radius={[3, 3, 0, 0]} />
         </BarChart>
       </ResponsiveContainer>
     )
@@ -153,11 +153,11 @@ function ChartRenderer({ res }: { res: EDAResponse }) {
     return (
       <ResponsiveContainer width="100%" height={280}>
         <ScatterChart margin={{ top: 4, right: 8, left: 0, bottom: 4 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#1f2330" />
-          <XAxis dataKey="x" name={String(metadata.x_col ?? 'x')} tick={{ fill: '#8b90a8', fontSize: 11 }} />
-          <YAxis dataKey="y" name={yKey} tick={{ fill: '#8b90a8', fontSize: 11 }} />
+          <CartesianGrid strokeDasharray="3 3" stroke="#E2E6ED" />
+          <XAxis dataKey="x" name={String(metadata.x_col ?? 'x')} tick={{ fill: '#6B7280', fontSize: 11 }} />
+          <YAxis dataKey="y" name={yKey} tick={{ fill: '#6B7280', fontSize: 11 }} />
           <Tooltip {...TOOLTIP_STYLE} cursor={{ strokeDasharray: '3 3' }} />
-          <Scatter data={arr} fill="#4af0a0" fillOpacity={0.7} />
+          <Scatter data={arr} fill="#00B5A3" fillOpacity={0.7} />
         </ScatterChart>
       </ResponsiveContainer>
     )
@@ -170,11 +170,11 @@ function ChartRenderer({ res }: { res: EDAResponse }) {
   return (
     <ResponsiveContainer width="100%" height={280}>
       <Chart data={arr} margin={{ top: 4, right: 8, left: 0, bottom: 4 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#1f2330" />
-        <XAxis dataKey="name" tick={{ fill: '#8b90a8', fontSize: 11 }} />
-        <YAxis tick={{ fill: '#8b90a8', fontSize: 11 }} />
+        <CartesianGrid strokeDasharray="3 3" stroke="#E2E6ED" />
+        <XAxis dataKey="name" tick={{ fill: '#6B7280', fontSize: 11 }} />
+        <YAxis tick={{ fill: '#6B7280', fontSize: 11 }} />
         <Tooltip {...TOOLTIP_STYLE} />
-        <Legend wrapperStyle={{ color: '#8b90a8', fontSize: 12 }} />
+        <Legend wrapperStyle={{ color: '#6B7280', fontSize: 12 }} />
         {yKeys.map((k, i) =>
           ct === 'line'
             ? <Line key={k} type="monotone" dataKey={k} stroke={ACCENT_COLORS[i % ACCENT_COLORS.length]} dot={false} strokeWidth={2} />

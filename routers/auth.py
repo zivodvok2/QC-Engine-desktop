@@ -10,7 +10,7 @@ from pydantic import BaseModel
 
 import shared_db
 
-SECRET_KEY = os.environ.get("JWT_SECRET", "servallab-dev-secret-change-in-prod")
+SECRET_KEY = os.environ.get("JWT_SECRET", "dev-secret-change-in-prod")
 ALGORITHM = "HS256"
 TOKEN_EXPIRE_HOURS = 24 * 7
 OTP_EXPIRE_MINUTES = 10

@@ -29,9 +29,9 @@ const qc = new QueryClient({
 })
 
 const ACCENT_VARS: Record<string, [string, string]> = {
-  emerald: ['74 240 160', '42 184 112'],
-  blue:    ['74 158 240', '42 110 200'],
-  purple:  ['160 120 240', '110 80 200'],
+  emerald: ['0 181 163',   '0 155 140'],
+  blue:    ['37 99 235',   '29 78 216'],
+  purple:  ['99 102 241',  '79 70 229'],
   orange:  ['240 144 64',  '200 100 24'],
   pink:    ['240 74 144',  '200 34 104'],
 }
@@ -146,7 +146,7 @@ function LandingPage() {
 function TabContent() {
   const { activeTab } = useAppStore()
   return (
-    <div className="flex-1 overflow-auto p-6">
+    <div key={activeTab} className="flex-1 overflow-auto p-6 page-fade">
       {activeTab === 'QC Report'      && <QCReport />}
       {activeTab === 'Logic Checks'   && <LogicChecks />}
       {activeTab === 'Straightlining' && <Straightlining />}

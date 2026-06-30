@@ -281,7 +281,7 @@ def render_sidebar():
             st.download_button(
                 "↓ Save project config",
                 data=json.dumps(proj_data, indent=2, default=str),
-                file_name=f"{st.session_state.project_name or 'project'}.servallab.json",
+                file_name=f"{st.session_state.project_name or 'project'}.qcengine.json",
                 mime="application/json",
                 use_container_width=True,
             )
@@ -290,7 +290,7 @@ def render_sidebar():
                 type=["json"],
                 key="proj_load",
                 label_visibility="visible",
-                help="Upload a previously saved .servallab.json file",
+                help="Upload a previously saved .qcengine.json file",
             )
             if proj_file:
                 try:

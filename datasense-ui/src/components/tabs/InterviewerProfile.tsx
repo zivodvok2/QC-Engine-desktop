@@ -14,17 +14,17 @@ interface Props {
 }
 
 const FLAG_METRICS = [
-  { key: 'fabrication_flags', label: 'Fabrication', color: '#f04a6a' },
-  { key: 'duration_flags',    label: 'Duration',    color: '#f0c04a' },
-  { key: 'straightlining_flags', label: 'Straightlining', color: '#a78bfa' },
-  { key: 'productivity_flags',   label: 'Productivity',   color: '#60a5fa' },
-  { key: 'verbatim_flags',       label: 'Verbatim',       color: '#4af0a0' },
+  { key: 'fabrication_flags', label: 'Fabrication', color: '#1B2A4A' },
+  { key: 'duration_flags',    label: 'Duration',    color: '#00B5A3' },
+  { key: 'straightlining_flags', label: 'Straightlining', color: '#1B2A4A' },
+  { key: 'productivity_flags',   label: 'Productivity',   color: '#00B5A3' },
+  { key: 'verbatim_flags',       label: 'Verbatim',       color: '#00B5A3' },
 ]
 
 function riskHex(score: number, red: number, amber: number) {
-  if (score >= red) return '#f04a6a'
-  if (score >= amber) return '#f0c04a'
-  return '#4af0a0'
+  if (score >= red) return '#1B2A4A'
+  if (score >= amber) return '#00B5A3'
+  return '#00B5A3'
 }
 
 function riskBadgeClass(level: string) {
@@ -40,8 +40,8 @@ function riskNote(level: string) {
 }
 
 const TOOLTIP_STYLE = {
-  contentStyle: { background: '#111318', border: '1px solid #1f2330', borderRadius: 6 },
-  labelStyle: { color: '#e8eaf2' },
+  contentStyle: { background: '#FFFFFF', border: '1px solid #E2E6ED', borderRadius: 6 },
+  labelStyle: { color: '#1B2A4A' },
 }
 
 export function InterviewerProfile({ row, intColName, redThr, amberThr, onClose }: Props) {
@@ -57,9 +57,9 @@ export function InterviewerProfile({ row, intColName, redThr, amberThr, onClose 
 
   const stats = [
     { label: 'Risk Score',       value: row.risk_score,         icon: TrendingUp,  color },
-    { label: 'Total Interviews', value: row.total_interviews,   icon: Briefcase,   color: '#e8eaf2' },
-    { label: 'Total Flags',      value: row.total_flags,        icon: Flag,        color: '#f0c04a' },
-    { label: 'Flag Rate',        value: `${row.flag_rate_pct}%`, icon: Flag,       color: '#e8eaf2' },
+    { label: 'Total Interviews', value: row.total_interviews,   icon: Briefcase,   color: '#1B2A4A' },
+    { label: 'Total Flags',      value: row.total_flags,        icon: Flag,        color: '#00B5A3' },
+    { label: 'Flag Rate',        value: `${row.flag_rate_pct}%`, icon: Flag,       color: '#1B2A4A' },
   ]
 
   return (
@@ -121,9 +121,9 @@ export function InterviewerProfile({ row, intColName, redThr, amberThr, onClose 
             <p className="text-xs font-semibold text-tx mb-4">Flag Breakdown by Type</p>
             <ResponsiveContainer width="100%" height={150}>
               <BarChart data={chartData} margin={{ top: 4, right: 8, left: -24, bottom: 4 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#1f2330" />
-                <XAxis dataKey="name" tick={{ fill: '#8b90a8', fontSize: 11 }} />
-                <YAxis tick={{ fill: '#8b90a8', fontSize: 10 }} allowDecimals={false} />
+                <CartesianGrid strokeDasharray="3 3" stroke="#E2E6ED" />
+                <XAxis dataKey="name" tick={{ fill: '#6B7280', fontSize: 11 }} />
+                <YAxis tick={{ fill: '#6B7280', fontSize: 10 }} allowDecimals={false} />
                 <Tooltip
                   {...TOOLTIP_STYLE}
                   formatter={(v: number) => [v, 'Flags']}

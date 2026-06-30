@@ -13,12 +13,12 @@ import type { CheckResult } from '../../types'
 import type { Project } from '../../api/projects'
 
 const SEV_ORDER: Record<string, number> = { critical: 0, warning: 1, info: 2 }
-const SEV_COLORS: Record<string, string> = { critical: '#f04a6a', warning: '#f0c04a', info: '#4af0a0' }
-const RISK_COLORS: Record<string, string> = { HIGH: '#f04a6a', MEDIUM: '#f0c04a', LOW: '#4af0a0' }
+const SEV_COLORS: Record<string, string> = { critical: '#1B2A4A', warning: '#00B5A3', info: '#00B5A3' }
+const RISK_COLORS: Record<string, string> = { HIGH: '#1B2A4A', MEDIUM: '#00B5A3', LOW: '#00B5A3' }
 const CHART_TOOLTIP_STYLE = {
-  contentStyle: { background: '#111318', border: '1px solid #1f2330', borderRadius: 6 },
-  labelStyle: { color: '#e8eaf2' },
-  itemStyle: { color: '#4af0a0' },
+  contentStyle: { background: '#FFFFFF', border: '1px solid #E2E6ED', borderRadius: 6 },
+  labelStyle: { color: '#1B2A4A' },
+  itemStyle: { color: '#00B5A3' },
 }
 
 function MetricCard({ label, value, color }: { label: string; value: number | string; color?: string }) {
@@ -423,7 +423,7 @@ function SeverityBreakdownChart({ flaggedBySeverity }: { flaggedBySeverity: Reco
                 <Cell key={i} fill={entry.fill} />
               ))}
             </Pie>
-            <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 10, color: '#8b90a8' }} />
+            <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 10, color: '#6B7280' }} />
             <Tooltip {...CHART_TOOLTIP_STYLE} formatter={(v: number, name: string) => [v, name]} />
           </PieChart>
         </ResponsiveContainer>
@@ -456,15 +456,15 @@ function InterviewerFlagChart({ nameFilter }: { nameFilter: string }) {
       {!isLoading && top.length > 0 && (
         <ResponsiveContainer width="100%" height={180}>
           <BarChart data={top} margin={{ top: 4, right: 4, left: -28, bottom: 32 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#1f2330" />
+            <CartesianGrid strokeDasharray="3 3" stroke="#E2E6ED" />
             <XAxis
               dataKey={colName}
-              tick={{ fill: '#8b90a8', fontSize: 9 }}
+              tick={{ fill: '#6B7280', fontSize: 9 }}
               angle={-35}
               textAnchor="end"
               interval={0}
             />
-            <YAxis allowDecimals={false} tick={{ fill: '#8b90a8', fontSize: 9 }} />
+            <YAxis allowDecimals={false} tick={{ fill: '#6B7280', fontSize: 9 }} />
             <Tooltip {...CHART_TOOLTIP_STYLE} formatter={(v: number) => [v, 'Flags']} />
             <Bar dataKey="total_flags" radius={[3, 3, 0, 0]}>
               {top.map((r, i) => (

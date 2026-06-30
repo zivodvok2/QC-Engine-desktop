@@ -9,8 +9,8 @@ import {
 } from '../../../api/dashboard'
 
 const C = {
-  accent: '#4af0a0', muted: '#8b90a8', surface: '#111318', surface2: '#181b22',
-  line: '#1f2330', tx: '#e8eaf2', info: '#4a9ef0',
+  accent: '#00B5A3', muted: '#6B7280', surface: '#FFFFFF', surface2: '#F1F4F8',
+  line: '#E2E6ED', tx: '#1B2A4A', info: '#1B2A4A',
 }
 const TooltipStyle = {
   contentStyle: { backgroundColor: C.surface2, border: `1px solid ${C.line}`, borderRadius: 6, color: C.tx },

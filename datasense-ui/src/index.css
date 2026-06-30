@@ -2,89 +2,144 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ── Theme tokens ──────────────────────────────────────────────────────────── */
-/* Values are space-separated R G B for Tailwind's rgb(var / alpha) pattern    */
-
+/* ── Ipsos brand tokens ────────────────────────────────────────────────────── */
 :root {
-  /* Dark (default) */
-  --c-bg:         11 12 15;
-  --c-surface:    17 19 24;
-  --c-surface2:   24 27 34;
-  --c-line:       31 35 48;
-  --c-tx:         232 234 242;
-  --c-muted:      139 144 168;
-  /* Accent: emerald (default) */
-  --c-accent:     74 240 160;
-  --c-accent-dim: 42 184 112;
-}
-
-[data-theme="light"] {
-  --c-bg:         244 245 247;
-  --c-surface:    255 255 255;
-  --c-surface2:   238 240 244;
-  --c-line:       210 215 228;
-  --c-tx:         15 17 23;
-  --c-muted:      100 108 128;
-}
-
-[data-theme="midnight"] {
-  --c-bg:         5 6 10;
-  --c-surface:    10 12 18;
-  --c-surface2:   14 17 26;
-  --c-line:       20 25 40;
-  --c-tx:         220 224 240;
-  --c-muted:      110 118 148;
+  --c-bg:         250 252 255;    /* near-white page background — clean, not grey */
+  --c-surface:    255 255 255;    /* pure white cards */
+  --c-surface2:   237 243 252;    /* sidebar, input bg — distinctly blue but light */
+  --c-line:       213 224 240;    /* borders */
+  --c-tx:         27  42  74;     /* Ipsos navy — primary text */
+  --c-muted:      89  107 140;    /* secondary text (navy-tinted, not pure gray) */
+  --c-accent:     0   181 163;    /* Ipsos teal */
+  --c-accent-dim: 0   155 140;    /* teal hover */
+  --c-navy:       27  42  74;     /* sidebar / header bg */
 }
 
 /* ── Base ───────────────────────────────────────────────────────────────────── */
 @layer base {
   html, body, #root {
-    @apply h-full font-mono bg-bg text-tx;
+    @apply h-full font-sans bg-bg text-tx;
     -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
 
-  * {
-    @apply border-line;
-  }
+  * { @apply border-line; }
 
-  ::-webkit-scrollbar { width: 6px; height: 6px; }
-  ::-webkit-scrollbar-track { @apply bg-transparent; }
-  ::-webkit-scrollbar-thumb { @apply bg-line rounded-full; }
-  ::-webkit-scrollbar-thumb:hover { @apply bg-muted; }
-
-  input[type='range'] {
-    @apply accent-accent;
-  }
+  ::-webkit-scrollbar { width: 5px; height: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: rgb(var(--c-line)); border-radius: 9999px; }
+  ::-webkit-scrollbar-thumb:hover { background: rgb(var(--c-muted) / 0.5); }
 
   select {
-    @apply bg-surface2 text-tx border border-line rounded px-2 py-1 text-sm outline-none;
+    @apply bg-surface text-tx border border-line rounded-lg px-3 py-2 text-sm outline-none
+           focus:border-accent focus:ring-2 focus:ring-accent/20 transition-all shadow-sm;
   }
 
-  input[type='text'], input[type='number'], input[type='password'] {
-    @apply bg-surface2 text-tx border border-line rounded px-2 py-1 text-sm outline-none focus:border-accent;
+  input[type='text'],
+  input[type='number'],
+  input[type='email'],
+  input[type='password'] {
+    @apply bg-surface text-tx border border-line rounded-lg px-3 py-2 text-sm outline-none
+           focus:border-accent focus:ring-2 focus:ring-accent/20 transition-all shadow-sm;
   }
+
+  input[type='range'] { @apply accent-accent; }
 }
 
 /* ── Components ─────────────────────────────────────────────────────────────── */
 @layer components {
+
+  /* Primary button */
   .btn-primary {
-    @apply bg-accent text-bg font-display font-bold px-4 py-2 rounded text-sm
-           hover:bg-accent-dim transition-colors disabled:opacity-40 disabled:cursor-not-allowed;
+    @apply bg-accent text-white font-semibold px-4 py-2 rounded-lg text-sm
+           hover:bg-accent-dim transition-colors disabled:opacity-40 disabled:cursor-not-allowed
+           shadow-sm;
   }
+
+  /* Ghost button */
   .btn-ghost {
-    @apply border border-line text-muted px-3 py-1.5 rounded text-sm
-           hover:border-accent hover:text-tx transition-colors;
+    @apply border border-line text-tx bg-surface px-3 py-1.5 rounded-lg text-sm
+           hover:border-accent hover:text-accent transition-colors shadow-sm;
   }
+
+  /* Danger button — navy styled (no red) */
+  .btn-danger {
+    @apply bg-navy/10 border border-navy/20 text-navy px-3 py-1.5 rounded-lg text-sm
+           hover:bg-navy/20 transition-colors;
+  }
+
+  /* White card — floats on the near-white background */
   .card {
-    @apply bg-surface border border-line rounded-lg;
+    @apply bg-surface rounded-xl border border-line/70;
+    box-shadow: 0 3px 14px 0 rgb(27 42 74 / 0.10), 0 1px 3px 0 rgb(27 42 74 / 0.06);
   }
+
+  /* Secondary card — slightly tinted */
   .card2 {
-    @apply bg-surface2 border border-line rounded-lg;
+    @apply bg-surface2/60 border border-line rounded-lg;
   }
+
+  /* Small uppercase label */
   .label {
-    @apply text-xs text-muted uppercase tracking-wider;
+    @apply text-xs text-muted uppercase tracking-widest font-semibold;
   }
-  .badge-critical { @apply bg-critical/20 text-critical text-xs px-2 py-0.5 rounded-full; }
-  .badge-warning  { @apply bg-warning/20  text-warning  text-xs px-2 py-0.5 rounded-full; }
-  .badge-info     { @apply bg-info/20     text-info     text-xs px-2 py-0.5 rounded-full; }
+
+  /* KPI card — left teal accent border, white float */
+  .kpi-card {
+    @apply bg-surface rounded-xl border-l-4 border-l-accent border border-line/60 pl-4 pr-5 py-4;
+    box-shadow: 0 2px 8px 0 rgb(27 42 74 / 0.07), 0 1px 2px 0 rgb(27 42 74 / 0.04);
+  }
+
+  /* Status badges — Ipsos navy only; no off-brand colors */
+  .badge-critical { @apply bg-navy/10 text-navy border border-navy/20 text-xs px-2.5 py-0.5 rounded-full font-semibold; }
+  .badge-warning  { @apply bg-navy/10 text-navy border border-navy/20 text-xs px-2.5 py-0.5 rounded-full font-semibold; }
+  .badge-info     { @apply bg-navy/10 text-navy border border-navy/20 text-xs px-2.5 py-0.5 rounded-full font-semibold; }
+  .badge-success  { @apply bg-accent/10 text-accent border border-accent/25 text-xs px-2.5 py-0.5 rounded-full font-semibold; }
+
+  /* Dashboard sidebar nav — navy background */
+  .nav-item {
+    @apply flex items-center gap-2.5 px-4 py-2.5 text-sm transition-colors text-white/60
+           hover:text-white hover:bg-white/10 rounded-none;
+  }
+  .nav-item-active {
+    @apply flex items-center gap-2.5 px-4 py-2.5 text-sm text-white bg-white/15
+           border-r-2 border-accent font-medium rounded-none;
+  }
+
+  /* QC Engine sidebar section — clean on light bg */
+  .sidebar-section {
+    @apply border-t border-line/50;
+  }
+  .sidebar-section-btn {
+    @apply w-full flex items-center justify-between px-4 py-2.5 text-xs text-tx font-semibold
+           uppercase tracking-widest hover:text-accent transition-colors;
+  }
+}
+
+/* ── QC Engine sidebar specific ─────────────────────────────────────────────── */
+/* Navy header blends into the light-blue sidebar body */
+.qc-sidebar {
+  background-color: rgb(var(--c-surface2));
+}
+.qc-sidebar-header {
+  background-color: rgb(var(--c-navy));
+  box-shadow: 0 2px 12px rgb(27 42 74 / 0.18);
+}
+
+/* ── Chart tooltip overrides ─────────────────────────────────────────────────── */
+.recharts-tooltip-wrapper .recharts-default-tooltip {
+  border-radius: 8px !important;
+  box-shadow: 0 4px 16px rgb(27 42 74 / 0.12) !important;
+}
+
+/* ── Smooth page transitions ─────────────────────────────────────────────────── */
+@layer utilities {
+  .page-fade {
+    animation: pageFadeIn 0.18s ease-out;
+  }
+}
+
+@keyframes pageFadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
 }

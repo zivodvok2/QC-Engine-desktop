@@ -146,11 +146,11 @@ export function Straightlining() {
               <p className="label mb-3">Flags by {baseVar[0] ?? 'base variable'}</p>
               <ResponsiveContainer width="100%" height={220}>
                 <BarChart data={chartData} margin={{ top: 0, right: 8, left: 0, bottom: 40 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#1f2330" />
-                  <XAxis dataKey="name" tick={{ fill: '#8b90a8', fontSize: 11 }} angle={-35} textAnchor="end" interval={0} />
-                  <YAxis tick={{ fill: '#8b90a8', fontSize: 11 }} />
-                  <Tooltip contentStyle={{ background: '#111318', border: '1px solid #1f2330', borderRadius: 6 }} labelStyle={{ color: '#e8eaf2' }} itemStyle={{ color: '#4af0a0' }} />
-                  <Bar dataKey="count" fill="#4af0a0" radius={[3, 3, 0, 0]} />
+                  <CartesianGrid strokeDasharray="3 3" stroke="#E2E6ED" />
+                  <XAxis dataKey="name" tick={{ fill: '#6B7280', fontSize: 11 }} angle={-35} textAnchor="end" interval={0} />
+                  <YAxis tick={{ fill: '#6B7280', fontSize: 11 }} />
+                  <Tooltip contentStyle={{ background: '#FFFFFF', border: '1px solid #E2E6ED', borderRadius: 6 }} labelStyle={{ color: '#1B2A4A' }} itemStyle={{ color: '#00B5A3' }} />
+                  <Bar dataKey="count" fill="#00B5A3" radius={[3, 3, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </div>

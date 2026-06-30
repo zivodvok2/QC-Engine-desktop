@@ -29,13 +29,13 @@ function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean
 function Section({ title, children, defaultOpen = false }: { title: string; children: React.ReactNode; defaultOpen?: boolean }) {
   const [open, setOpen] = useState(defaultOpen)
   return (
-    <div className="border-t border-line">
+    <div className="sidebar-section">
       <button
         onClick={() => setOpen((o) => !o)}
-        className="w-full flex items-center justify-between px-4 py-2.5 text-xs text-muted hover:text-tx transition-colors"
+        className="sidebar-section-btn"
       >
-        <span className="uppercase tracking-wider">{title}</span>
-        {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+        <span>{title}</span>
+        {open ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
       </button>
       {open && <div className="px-4 pb-4 space-y-3">{children}</div>}
     </div>
@@ -44,8 +44,8 @@ function Section({ title, children, defaultOpen = false }: { title: string; chil
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="space-y-1">
-      <p className="text-xs text-muted">{label}</p>
+    <div className="space-y-1.5">
+      <p className="text-[11px] font-semibold text-tx tracking-wide">{label}</p>
       {children}
     </div>
   )
@@ -75,42 +75,37 @@ export function Sidebar() {
   ) => updateConfig({ [key]: { ...(config[key] as object), ...patch } } as never)
 
   return (
-    <aside className="w-64 shrink-0 bg-surface border-r border-line flex flex-col h-full overflow-y-auto">
-      {/* Brand */}
-      <div className="flex items-center gap-3 px-4 py-4 border-b border-line">
-        <div className="w-7 h-7 bg-accent rounded flex items-center justify-center shrink-0">
-          <span className="font-display font-extrabold text-bg text-xs">SL</span>
+    <aside className="qc-sidebar w-64 shrink-0 border-r border-line/60 flex flex-col h-full overflow-y-auto">
+      {/* Brand — navy header */}
+      <div className="qc-sidebar-header flex items-center gap-3 px-4 py-[18px] shrink-0">
+        <div className="w-8 h-8 bg-accent rounded-lg flex items-center justify-center shrink-0 shadow-sm">
+          <span className="font-display font-extrabold text-white text-xs tracking-wide">SL</span>
         </div>
         <div className="flex-1">
-          <div className="font-display font-extrabold text-sm text-tx leading-none">Servalab</div>
-          <div className="text-[10px] text-muted leading-none mt-0.5">QC Engine</div>
+          <div className="font-display font-bold text-sm text-white leading-tight tracking-wide">Servalab</div>
+          <div className="text-[10px] text-white/50 leading-none mt-0.5 tracking-widest uppercase">QC Engine</div>
         </div>
-        {/* Backend health */}
         {!healthLoading && (
           <div title={online ? 'Backend online' : 'Backend unreachable'}>
             {online
               ? <Wifi size={12} className="text-accent" />
-              : <WifiOff size={12} className="text-critical animate-pulse" />
+              : <WifiOff size={12} className="text-white/50 animate-pulse" />
             }
           </div>
         )}
-        <button
-          onClick={openSettings}
-          title="Settings"
-          className="text-muted hover:text-tx transition-colors"
-        >
+        <button onClick={openSettings} title="Settings" className="text-white/40 hover:text-white transition-colors">
           <Settings size={14} />
         </button>
       </div>
 
       {!online && !healthLoading && (
-        <div className="px-4 py-2 bg-critical/10 border-b border-critical/30">
-          <p className="text-[10px] text-critical leading-tight">Backend unreachable. Please try again shortly.</p>
+        <div className="mx-3 mb-2 px-3 py-2 bg-white/10 rounded-lg border border-white/20">
+          <p className="text-[10px] text-white/80 leading-tight">Backend unreachable — please retry shortly.</p>
         </div>
       )}
 
       {/* File upload */}
-      <div className="px-4 py-3 border-b border-line">
+      <div className="px-3 py-3">
         <FileUpload compact />
       </div>
 
@@ -126,7 +121,7 @@ export function Sidebar() {
         </Field>
 
         <div className="flex items-center justify-between">
-          <span className="text-xs text-muted">Duplicate check</span>
+          <span className="text-xs text-tx">Duplicate check</span>
           <Toggle
             checked={config.duplicate_check.enabled}
             onChange={(v) => updNested('duplicate_check', { enabled: v })}
@@ -134,7 +129,7 @@ export function Sidebar() {
         </div>
 
         <div className="flex items-center justify-between">
-          <span className="text-xs text-muted">Duration check</span>
+          <span className="text-xs text-tx">Duration check</span>
           <Toggle
             checked={config.interview_duration.enabled}
             onChange={(v) => updNested('interview_duration', { enabled: v })}
@@ -180,14 +175,14 @@ export function Sidebar() {
           />
         </Field>
         <div className="flex items-center justify-between">
-          <span className="text-xs text-muted">Duration anomaly</span>
+          <span className="text-xs text-tx">Duration anomaly</span>
           <Toggle
             checked={config.interviewer_duration_check.enabled}
             onChange={(v) => updNested('interviewer_duration_check', { enabled: v })}
           />
         </div>
         <div className="flex items-center justify-between">
-          <span className="text-xs text-muted">Productivity check</span>
+          <span className="text-xs text-tx">Productivity check</span>
           <Toggle
             checked={config.interviewer_productivity_check.enabled}
             onChange={(v) => updNested('interviewer_productivity_check', { enabled: v })}
@@ -198,7 +193,7 @@ export function Sidebar() {
       {/* Consent */}
       <Section title="Consent / Eligibility">
         <div className="flex items-center justify-between">
-          <span className="text-xs text-muted">Enable</span>
+          <span className="text-xs text-tx">Enable</span>
           <Toggle
             checked={config.consent_eligibility_check.enabled}
             onChange={(v) => updNested('consent_eligibility_check', { enabled: v })}
@@ -221,7 +216,7 @@ export function Sidebar() {
       {/* Fabrication */}
       <Section title="Fabrication Detection">
         <div className="flex items-center justify-between">
-          <span className="text-xs text-muted">Enable</span>
+          <span className="text-xs text-tx">Enable</span>
           <Toggle
             checked={config.fabrication_check.enabled}
             onChange={(v) => updNested('fabrication_check', { enabled: v })}
@@ -292,7 +287,7 @@ export function Sidebar() {
       <Section title="Settings">
         {/* Theme */}
         <div className="space-y-1.5">
-          <p className="text-xs text-muted">Theme</p>
+          <p className="text-xs text-tx">Theme</p>
           <div className="flex gap-1.5">
             {(['dark', 'light', 'midnight'] as const).map((t) => (
               <button
@@ -310,24 +305,21 @@ export function Sidebar() {
           </div>
         </div>
 
-        {/* Accent colour */}
+        {/* Accent colour — Ipsos palette only */}
         <div className="space-y-1.5">
-          <p className="text-xs text-muted">Accent colour</p>
+          <p className="text-xs text-tx font-medium">Accent colour</p>
           <div className="flex gap-2">
             {([
-              ['emerald', '#4af0a0'],
-              ['blue',    '#4a9ef0'],
-              ['purple',  '#a078f0'],
-              ['orange',  '#f09040'],
-              ['pink',    '#f04a90'],
-            ] as const).map(([name, hex]) => (
+              ['emerald', '#00B5A3', 'Ipsos Teal'],
+              ['blue',    '#1B2A4A', 'Ipsos Navy'],
+            ] as const).map(([name, hex, label]) => (
               <button
                 key={name}
-                title={name}
+                title={label}
                 onClick={() => setAccent(name)}
                 style={{ background: hex }}
                 className={`w-6 h-6 rounded-full transition-transform hover:scale-110 ${
-                  accent === name ? 'ring-2 ring-offset-1 ring-offset-surface ring-white/60 scale-110' : ''
+                  accent === name ? 'ring-2 ring-offset-1 ring-offset-surface ring-accent scale-110' : ''
                 }`}
               />
             ))}
@@ -434,25 +426,25 @@ export function Sidebar() {
         </button>
       </div>
 
-      {/* Run button */}
-      <div className="px-4 py-4 border-t border-line space-y-2">
+      {/* Run button — pinned at bottom */}
+      <div className="px-3 py-3 mt-auto border-t border-line/50 space-y-2">
         {isRunning && (
-          <div className="w-full bg-line rounded-full h-1">
+          <div className="w-full bg-navy/20 rounded-full h-1">
             <div className="bg-accent h-1 rounded-full transition-all" style={{ width: `${jobProgress || 20}%` }} />
           </div>
         )}
         {(runError || (jobStatus === 'failed' && jobError)) && (
-          <div className="flex items-start gap-1.5 text-critical text-[10px]">
-            <AlertCircle size={11} className="shrink-0 mt-0.5" />
+          <div className="flex items-start gap-1.5 text-tx text-[10px] font-medium bg-navy/10 rounded-lg px-2.5 py-1.5">
+            <AlertCircle size={11} className="shrink-0 mt-0.5 text-accent" />
             <span className="break-words">{runError ?? jobError}</span>
           </div>
         )}
         <button
           onClick={run}
           disabled={!fileId || isRunning || !online}
-          className="btn-primary w-full flex items-center justify-center gap-2"
+          className="btn-primary w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm"
         >
-          <Play size={14} />
+          <Play size={14} fill="currentColor" />
           {isRunning
             ? jobStatus === 'queued' ? 'Queued…' : `Running ${jobProgress}%`
             : 'Run QC'}

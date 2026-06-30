@@ -16,15 +16,15 @@ import { InterviewerProfile } from './InterviewerProfile'
 import { getInterviewerMetrics, upsertInterviewer, bulkUpsertSupervisors, type InterviewerMetrics } from '../../api/dashboard'
 
 const TOOLTIP_STYLE = {
-  contentStyle: { background: '#111318', border: '1px solid #1f2330', borderRadius: 6 },
-  labelStyle: { color: '#e8eaf2' },
-  itemStyle: { color: '#4af0a0' },
+  contentStyle: { background: '#FFFFFF', border: '1px solid #E2E6ED', borderRadius: 6 },
+  labelStyle: { color: '#1B2A4A' },
+  itemStyle: { color: '#00B5A3' },
 }
 
 function riskColor(score: number, red: number, amber: number) {
-  if (score >= red) return '#f04a6a'
-  if (score >= amber) return '#f0c04a'
-  return '#4af0a0'
+  if (score >= red) return '#1B2A4A'
+  if (score >= amber) return '#00B5A3'
+  return '#00B5A3'
 }
 
 function riskScoreClass(score: number, red: number, amber: number) {
@@ -51,7 +51,7 @@ function MetricCard({ label, value, color }: { label: string; value: number | st
 // ── Dashboard ─────────────────────────────────────────────────────────────────
 
 const PIE_COLORS: Record<string, string> = {
-  HIGH: '#f04a6a', MEDIUM: '#f0c04a', LOW: '#4af0a0',
+  HIGH: '#1B2A4A', MEDIUM: '#00B5A3', LOW: '#00B5A3',
 }
 
 function RiskDashboard({
@@ -107,10 +107,10 @@ function RiskDashboard({
                 <Legend
                   iconType="circle"
                   iconSize={8}
-                  wrapperStyle={{ fontSize: 10, color: '#8b90a8' }}
+                  wrapperStyle={{ fontSize: 10, color: '#6B7280' }}
                 />
                 <Tooltip
-                  contentStyle={{ background: '#111318', border: '1px solid #1f2330', borderRadius: 6 }}
+                  contentStyle={{ background: '#FFFFFF', border: '1px solid #E2E6ED', borderRadius: 6 }}
                   formatter={(v: number, name: string) => [v, name]}
                 />
               </PieChart>
@@ -126,15 +126,15 @@ function RiskDashboard({
           {top5.length > 0 ? (
             <ResponsiveContainer width="100%" height={180}>
               <BarChart data={top5} margin={{ top: 4, right: 4, left: -28, bottom: 32 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#1f2330" />
+                <CartesianGrid strokeDasharray="3 3" stroke="#E2E6ED" />
                 <XAxis
                   dataKey={intColName}
-                  tick={{ fill: '#8b90a8', fontSize: 9 }}
+                  tick={{ fill: '#6B7280', fontSize: 9 }}
                   angle={-35}
                   textAnchor="end"
                   interval={0}
                 />
-                <YAxis domain={[0, 110]} tick={{ fill: '#8b90a8', fontSize: 9 }} />
+                <YAxis domain={[0, 110]} tick={{ fill: '#6B7280', fontSize: 9 }} />
                 <Tooltip {...TOOLTIP_STYLE} formatter={(v: number) => [v, 'Risk Score']} />
                 <Bar dataKey="risk_score" radius={[3, 3, 0, 0]}>
                   {top5.map((r, i) => (
@@ -154,26 +154,26 @@ function RiskDashboard({
           {dateTrends.length > 1 ? (
             <ResponsiveContainer width="100%" height={180}>
               <LineChart data={dateTrends} margin={{ top: 4, right: 4, left: -28, bottom: 32 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#1f2330" />
+                <CartesianGrid strokeDasharray="3 3" stroke="#E2E6ED" />
                 <XAxis
                   dataKey="date"
-                  tick={{ fill: '#8b90a8', fontSize: 9 }}
+                  tick={{ fill: '#6B7280', fontSize: 9 }}
                   angle={-35}
                   textAnchor="end"
                   interval="preserveStartEnd"
                 />
-                <YAxis tick={{ fill: '#8b90a8', fontSize: 9 }} allowDecimals={false} />
+                <YAxis tick={{ fill: '#6B7280', fontSize: 9 }} allowDecimals={false} />
                 <Tooltip
-                  contentStyle={{ background: '#111318', border: '1px solid #1f2330', borderRadius: 6 }}
+                  contentStyle={{ background: '#FFFFFF', border: '1px solid #E2E6ED', borderRadius: 6 }}
                   formatter={(v: number) => [v, 'Flags']}
                 />
                 <Line
                   type="monotone"
                   dataKey="flag_count"
-                  stroke="#4af0a0"
+                  stroke="#00B5A3"
                   strokeWidth={2}
                   dot={false}
-                  activeDot={{ r: 4, fill: '#4af0a0' }}
+                  activeDot={{ r: 4, fill: '#00B5A3' }}
                 />
               </LineChart>
             </ResponsiveContainer>
@@ -780,12 +780,12 @@ export function Interviewers() {
               <h3 className="text-sm font-medium text-tx mb-3">Risk Score Chart (top 20)</h3>
               <ResponsiveContainer width="100%" height={220}>
                 <BarChart data={top20} margin={{ top: 5, right: 20, left: 0, bottom: 60 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#1f2330" />
+                  <CartesianGrid strokeDasharray="3 3" stroke="#E2E6ED" />
                   <XAxis
-                    dataKey={intColName} tick={{ fill: '#8b90a8', fontSize: 10 }}
+                    dataKey={intColName} tick={{ fill: '#6B7280', fontSize: 10 }}
                     angle={-40} textAnchor="end" interval={0}
                   />
-                  <YAxis domain={[0, 110]} tick={{ fill: '#8b90a8', fontSize: 10 }} />
+                  <YAxis domain={[0, 110]} tick={{ fill: '#6B7280', fontSize: 10 }} />
                   <Tooltip {...TOOLTIP_STYLE} />
                   <Bar dataKey="risk_score" radius={[3, 3, 0, 0]}>
                     {top20.map((row, i) => (

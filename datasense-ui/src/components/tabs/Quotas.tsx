@@ -22,8 +22,8 @@ interface QuotaRow extends QuotaCell {
 }
 
 const TOOLTIP_STYLE = {
-  contentStyle: { background: '#111318', border: '1px solid #1f2330', borderRadius: 6 },
-  labelStyle: { color: '#e8eaf2' },
+  contentStyle: { background: '#FFFFFF', border: '1px solid #E2E6ED', borderRadius: 6 },
+  labelStyle: { color: '#1B2A4A' },
 }
 
 function statusStyle(s: string) {
@@ -41,9 +41,9 @@ function statusIcon(s: string) {
 }
 
 function barColor(s: string) {
-  if (s === 'OVERFILLED') return '#f04a6a'
-  if (s === 'ON TRACK')   return '#4af0a0'
-  if (s === 'AT RISK')    return '#f0c04a'
+  if (s === 'OVERFILLED') return '#1B2A4A'
+  if (s === 'ON TRACK')   return '#00B5A3'
+  if (s === 'AT RISK')    return '#00B5A3'
   return '#666'
 }
 
@@ -269,11 +269,11 @@ export function Quotas() {
               <h3 className="text-sm font-medium text-tx mb-3">Achieved vs. Target by Quota Cell</h3>
               <ResponsiveContainer width="100%" height={220}>
                 <BarChart data={chartData} margin={{ top: 5, right: 20, left: 0, bottom: 60 }} barGap={4}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#1f2330" />
-                  <XAxis dataKey="name" tick={{ fill: '#8b90a8', fontSize: 10 }} angle={-35} textAnchor="end" interval={0} />
-                  <YAxis tick={{ fill: '#8b90a8', fontSize: 10 }} />
+                  <CartesianGrid strokeDasharray="3 3" stroke="#E2E6ED" />
+                  <XAxis dataKey="name" tick={{ fill: '#6B7280', fontSize: 10 }} angle={-35} textAnchor="end" interval={0} />
+                  <YAxis tick={{ fill: '#6B7280', fontSize: 10 }} />
                   <Tooltip {...TOOLTIP_STYLE} />
-                  <Legend wrapperStyle={{ color: '#8b90a8', fontSize: 11, paddingTop: 8 }} />
+                  <Legend wrapperStyle={{ color: '#6B7280', fontSize: 11, paddingTop: 8 }} />
                   <Bar dataKey="Target" fill="rgba(255,255,255,0.06)" stroke="rgba(255,255,255,0.2)" strokeWidth={1} radius={[3, 3, 0, 0] as [number,number,number,number]} />
                   <Bar dataKey="Achieved" radius={[3, 3, 0, 0] as [number,number,number,number]}>
                     {chartData.map((entry, i) => (

@@ -8,9 +8,9 @@ import { useAppStore } from '../../store/appStore'
 import { getDashboardSummary, getDashboardActivity, type ProjectSummary, type ActivityEntry } from '../../api/dashboard'
 
 const C = {
-  accent: '#4af0a0', critical: '#f04a6a', warning: '#f0c04a', info: '#4a9ef0',
-  purple: '#a078f0', muted: '#8b90a8', surface: '#111318', surface2: '#181b22',
-  line: '#1f2330', tx: '#e8eaf2',
+  accent: '#00B5A3', critical: '#1B2A4A', warning: '#00B5A3', info: '#1B2A4A',
+  purple: '#1B2A4A', muted: '#6B7280', surface: '#FFFFFF', surface2: '#F1F4F8',
+  line: '#E2E6ED', tx: '#1B2A4A',
 }
 
 const TooltipStyle = {
@@ -127,27 +127,27 @@ export function Overview({ onSelectProject }: Props) {
         <div className="space-y-2">
           <p className="label">Risk Alerts</p>
           {criticalProjects.map((p: ProjectSummary) => (
-            <div key={p.id} className="flex items-start gap-2 bg-critical/10 border border-critical/30 rounded-lg px-3 py-2.5">
-              <AlertCircle size={14} className="text-critical mt-0.5 shrink-0" />
-              <p className="text-xs text-critical">
+            <div key={p.id} className="flex items-start gap-2 bg-navy/10 border border-navy/20 rounded-lg px-3 py-2.5">
+              <AlertCircle size={14} className="text-tx mt-0.5 shrink-0" />
+              <p className="text-xs text-tx">
                 <span className="font-semibold">{p.name}</span> — flag rate{' '}
                 {Math.round(p.flagged / p.total_submitted * 100)}% exceeds critical threshold ({p.flag_critical_pct ?? 10}%)
               </p>
             </div>
           ))}
           {warningProjects.map((p: ProjectSummary) => (
-            <div key={p.id} className="flex items-start gap-2 bg-warning/10 border border-warning/30 rounded-lg px-3 py-2.5">
-              <AlertTriangle size={14} className="text-warning mt-0.5 shrink-0" />
-              <p className="text-xs text-warning">
+            <div key={p.id} className="flex items-start gap-2 bg-accent/10 border border-accent/20 rounded-lg px-3 py-2.5">
+              <AlertTriangle size={14} className="text-accent mt-0.5 shrink-0" />
+              <p className="text-xs text-tx">
                 <span className="font-semibold">{p.name}</span> — flag rate{' '}
                 {Math.round(p.flagged / p.total_submitted * 100)}% exceeds warning threshold ({p.flag_warning_pct ?? 5}%)
               </p>
             </div>
           ))}
           {lowBcProjects.map((p: ProjectSummary) => (
-            <div key={p.id} className="flex items-start gap-2 bg-info/10 border border-info/30 rounded-lg px-3 py-2.5">
-              <Info size={14} className="text-info mt-0.5 shrink-0" />
-              <p className="text-xs text-info">
+            <div key={p.id} className="flex items-start gap-2 bg-navy/5 border border-navy/10 rounded-lg px-3 py-2.5">
+              <Info size={14} className="text-muted mt-0.5 shrink-0" />
+              <p className="text-xs text-tx">
                 <span className="font-semibold">{p.name}</span> — back-check rate{' '}
                 {p.backcheck_rate}% is below 50% of target ({Math.round(p.backcheck_target * 100)}%)
               </p>
@@ -215,22 +215,18 @@ export function Overview({ onSelectProject }: Props) {
                     <div>
                       <p className="text-[10px] text-muted">BC Rate</p>
                       <p className={`text-xs font-bold ${
-                        p.backcheck_rate >= p.backcheck_target * 100 ? 'text-accent'
-                        : p.backcheck_rate >= p.backcheck_target * 80 ? 'text-warning'
-                        : 'text-critical'
+                        p.backcheck_rate >= p.backcheck_target * 100 ? 'text-accent' : 'text-tx'
                       }`}>{p.backcheck_rate}%</p>
                     </div>
                     <div>
                       <p className="text-[10px] text-muted">Listen-in</p>
                       <p className={`text-xs font-bold ${
-                        p.listenin_rate >= p.listenin_target * 100 ? 'text-accent'
-                        : p.listenin_rate >= p.listenin_target * 80 ? 'text-warning'
-                        : 'text-critical'
+                        p.listenin_rate >= p.listenin_target * 100 ? 'text-accent' : 'text-tx'
                       }`}>{p.listenin_rate}%</p>
                     </div>
                     <div>
                       <p className="text-[10px] text-muted">Flagged</p>
-                      <p className={`text-xs font-bold ${p.flagged > 0 ? 'text-critical' : 'text-muted'}`}>
+                      <p className={`text-xs font-bold ${p.flagged > 0 ? 'text-tx' : 'text-muted'}`}>
                         {p.flagged}
                       </p>
                     </div>

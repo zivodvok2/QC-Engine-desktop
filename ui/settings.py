@@ -130,7 +130,7 @@ def render_settings():
         show_onboarding_button()
         st.link_button(
             "📧 Send feedback",
-            url="mailto:feedback@servalab.com?subject=Servallab Feedback",
+            url="mailto:feedback@example.com?subject=QC Engine Feedback",
             use_container_width=True,
         )
 

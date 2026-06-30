@@ -37,6 +37,14 @@ PROJECTS = [
         "accompaniment_target": 0.20,
         "regions": ["Nairobi", "Mombasa", "Kisumu", "Nakuru"],
         "interviewers": ["NB0664", "NB0712", "MSA0234", "KSM0891", "NAK0445", "NB0991"],
+        "interviewer_profiles": {
+            "NB0664":  {"name": "James Kariuki",    "supervisor": "Wanjiku Kamau",  "region": "Nairobi"},
+            "NB0712":  {"name": "Mary Wanjiru",     "supervisor": "Wanjiku Kamau",  "region": "Nairobi"},
+            "MSA0234": {"name": "Hassan Mwangi",    "supervisor": "Aisha Hassan",   "region": "Mombasa"},
+            "KSM0891": {"name": "Atieno Ochieng",   "supervisor": "Aisha Hassan",   "region": "Kisumu"},
+            "NAK0445": {"name": "Peter Korir",      "supervisor": "Wanjiku Kamau",  "region": "Nakuru"},
+            "NB0991":  {"name": "Faith Njoki",      "supervisor": "Wanjiku Kamau",  "region": "Nairobi"},
+        },
         "waves": [
             ("Wave 1", date(2025, 2, 1),  date(2025, 2, 28),  120, 0.083, 0.82),
             ("Wave 2", date(2025, 3, 1),  date(2025, 3, 31),  180, 0.055, 0.87),
@@ -55,6 +63,16 @@ PROJECTS = [
         "accompaniment_target": 0.25,
         "regions": ["Nairobi", "Kisumu", "Eldoret", "Meru", "Nyeri"],
         "interviewers": ["NB1001", "NB1002", "KSM1003", "ELD1004", "MER1005", "NYR1006", "NB1007", "KSM1008"],
+        "interviewer_profiles": {
+            "NB1001":  {"name": "Samuel Kibe",       "supervisor": "Grace Muthoni",  "region": "Nairobi"},
+            "NB1002":  {"name": "Esther Wairimu",    "supervisor": "Grace Muthoni",  "region": "Nairobi"},
+            "KSM1003": {"name": "Odera Onyango",     "supervisor": "David Omondi",   "region": "Kisumu"},
+            "ELD1004": {"name": "Kiprop Rotich",     "supervisor": "David Omondi",   "region": "Eldoret"},
+            "MER1005": {"name": "Agnes Kirimi",      "supervisor": "Grace Muthoni",  "region": "Meru"},
+            "NYR1006": {"name": "John Macharia",     "supervisor": "Grace Muthoni",  "region": "Nyeri"},
+            "NB1007":  {"name": "Christine Waweru",  "supervisor": "Grace Muthoni",  "region": "Nairobi"},
+            "KSM1008": {"name": "Victor Odhiambo",   "supervisor": "David Omondi",   "region": "Kisumu"},
+        },
         "waves": [
             ("Wave 1", date(2025, 3, 1),  date(2025, 3, 31),  200, 0.060, 0.84),
             ("Wave 2", date(2025, 4, 1),  date(2025, 4, 30),  180, 0.078, 0.85),
@@ -72,6 +90,12 @@ PROJECTS = [
         "accompaniment_target": 0.20,
         "regions": ["Nairobi", "Mombasa"],
         "interviewers": ["NB0501", "NB0502", "MSA0503", "NB0504"],
+        "interviewer_profiles": {
+            "NB0501":  {"name": "Patrick Ndungu",    "supervisor": "James Ngugi",    "region": "Nairobi"},
+            "NB0502":  {"name": "Tabitha Muthoni",   "supervisor": "James Ngugi",    "region": "Nairobi"},
+            "MSA0503": {"name": "Fatuma Ali",        "supervisor": "James Ngugi",    "region": "Mombasa"},
+            "NB0504":  {"name": "Michael Kamau",     "supervisor": "James Ngugi",    "region": "Nairobi"},
+        },
         "waves": [
             ("Wave 1", date(2025, 1, 15), date(2025, 1, 31),  80,  0.092, 0.81),
             ("Wave 2", date(2025, 2, 1),  date(2025, 2, 28),  120, 0.058, 0.88),
@@ -264,7 +288,7 @@ def run():
     if db.get_all_projects():
         return
 
-    admin    = db.get_user_by_email("admin@servallab.com")
+    admin    = db.get_user_by_email("admin@example.com")
     admin_id = admin["id"] if admin else None
 
     for pdef in PROJECTS:
@@ -276,6 +300,18 @@ def run():
         )
         pid = next(p["id"] for p in db.get_all_projects() if p["name"] == pdef["name"])
         db.update_project(pid, status=pdef["status"])
+
+        # Seed interviewer registry with names and supervisors for this project
+        profiles = pdef.get("interviewer_profiles", {})
+        supervisor_names = list({p["supervisor"] for p in profiles.values() if p.get("supervisor")})
+        supervisor_ids = db.upsert_supervisors_bulk(supervisor_names)
+        for code, profile in profiles.items():
+            db.upsert_interviewer(
+                code,
+                name=profile.get("name"),
+                supervisor_id=supervisor_ids.get(profile.get("supervisor")),
+                region=profile.get("region"),
+            )
 
         for wave, wstart, wend, n, flagged_pct, approved_pct in pdef["waves"]:
             bc_tgt = pdef["backcheck_target"] + _RNG.uniform(-0.03, 0.05)

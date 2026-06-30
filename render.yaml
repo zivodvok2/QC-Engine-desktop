@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: servalab-api
+    name: ipsos-qc-engine-api
     runtime: python
     buildCommand: /opt/render/project/src/.venv/bin/pip install -r requirements-api.txt
     startCommand: uvicorn api:app --host 0.0.0.0 --port $PORT

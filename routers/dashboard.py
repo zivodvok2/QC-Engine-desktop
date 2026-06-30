@@ -864,6 +864,223 @@ def bulk_upsert_supervisors(body: BulkUpsertSupervisorsBody, user: dict = Depend
     return shared_db.upsert_supervisors_bulk(body.names)
 
 
+@router.get("/interviewers/analytics")
+def get_interviewer_analytics(
+    project_id: Optional[int] = None,
+    supervisor_id: Optional[int] = None,
+    region: Optional[str] = None,
+    user: dict = Depends(get_current_user),
+):
+    _require_db()
+    return shared_db.get_interviewer_analytics(project_id, supervisor_id, region)
+
+
+@router.get("/interviewers/export")
+def export_interviewer_report(
+    project_id: Optional[int] = None,
+    supervisor_id: Optional[int] = None,
+    region: Optional[str] = None,
+    user: dict = Depends(get_current_user),
+):
+    """Export a styled Excel report of interviewer performance analytics."""
+    import io
+    from datetime import datetime
+    from fastapi.responses import StreamingResponse
+    import openpyxl
+    from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+
+    _require_db()
+    data = shared_db.get_interviewer_analytics(project_id, supervisor_id, region)
+    rows = data["interviewers"]
+    by_sup = data["by_supervisor"]
+    projects = {p["id"]: p["name"] for p in data["projects"]}
+
+    # ── Palette ───────────────────────────────────────────────────────────────
+    DARK   = "1A1D2E"
+    MID    = "22263A"
+    ACCENT = "00C87A"
+    RED    = "E84060"
+    YELLOW = "E8B931"
+    GREEN  = "2ECC87"
+    WHITE  = "F0F2FC"
+    MUTED  = "8B90A8"
+
+    def fill(hex_str: str) -> PatternFill:
+        return PatternFill("solid", fgColor=hex_str)
+
+    def hdr_font(bold=True, size=10, color=WHITE) -> Font:
+        return Font(name="Calibri", bold=bold, size=size, color=color)
+
+    def cell_font(bold=False, size=10, color="FFFFFF") -> Font:
+        return Font(name="Calibri", bold=bold, size=size, color=color)
+
+    thin = Side(style="thin", color="2A2D3E")
+    border = Border(bottom=thin)
+
+    def risk_fill(rate: float) -> PatternFill:
+        if rate >= 15: return fill(RED)
+        if rate >= 8:  return fill(YELLOW)
+        return fill(GREEN)
+
+    def risk_font(rate: float) -> Font:
+        dark_text = rate >= 8 and rate < 15
+        return Font(name="Calibri", bold=True, size=10, color="1A1D2E" if dark_text else WHITE)
+
+    wb = openpyxl.Workbook()
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # Sheet 1 — Summary / KPIs
+    # ═══════════════════════════════════════════════════════════════════════════
+    ws = wb.active
+    ws.title = "Summary"
+    ws.sheet_view.showGridLines = False
+    ws.column_dimensions["A"].width = 28
+    ws.column_dimensions["B"].width = 22
+
+    def write_kpi(row, label, value, val_color=WHITE):
+        ws.cell(row=row, column=1, value=label).font = Font(name="Calibri", size=10, color=MUTED)
+        c = ws.cell(row=row, column=2, value=value)
+        c.font = Font(name="Calibri", bold=True, size=11, color=val_color)
+        ws.row_dimensions[row].height = 20
+
+    # Title block
+    ws.merge_cells("A1:F1")
+    t = ws["A1"]
+    t.value = "Interviewer Performance Report"
+    t.font = Font(name="Calibri", bold=True, size=16, color=ACCENT)
+    t.fill = fill(DARK)
+    ws.row_dimensions[1].height = 32
+
+    ws.merge_cells("A2:F2")
+    sub = ws["A2"]
+    sub.value = f"Generated: {datetime.now().strftime('%d %b %Y  %H:%M')}   |   Filters: " + \
+                ("Project: " + projects.get(project_id, str(project_id)) if project_id else "") + \
+                ("  Region: " + region if region else "")
+    sub.font = Font(name="Calibri", size=9, color=MUTED)
+    sub.fill = fill(DARK)
+    ws.row_dimensions[2].height = 16
+
+    ws["A3"].fill = fill(DARK); ws.row_dimensions[3].height = 8
+
+    with_data = [r for r in rows if r["total_interviews"] > 0]
+    avg_flag = round(sum(r["flag_rate"] for r in with_data) / len(with_data), 1) if with_data else 0
+    high_risk = sum(1 for r in rows if r["flag_rate"] >= 15)
+    total_bc_errors = sum(r["bc_errors"] for r in rows)
+    total_li_fail = sum(r["li_fail"] for r in rows)
+    total_cancelled = sum(r["cancelled"] for r in rows)
+
+    kpis = [
+        ("Total Interviewers", len(rows), WHITE),
+        ("Active (have records)", len(with_data), ACCENT),
+        ("Avg Flag Rate", f"{avg_flag}%", RED if avg_flag >= 15 else YELLOW if avg_flag >= 8 else GREEN),
+        ("High Risk (≥15% flag rate)", high_risk, RED if high_risk > 0 else GREEN),
+        ("Total BC Errors", total_bc_errors, YELLOW if total_bc_errors > 10 else WHITE),
+        ("Total Listen-in Fails", total_li_fail, YELLOW if total_li_fail > 5 else WHITE),
+        ("Total Cancelled Interviews", total_cancelled, WHITE),
+        ("Supervisors", len(by_sup), WHITE),
+    ]
+    for i, (label, value, color) in enumerate(kpis, start=4):
+        ws.cell(row=i, column=1, value=label).font = Font(name="Calibri", size=10, color=MUTED)
+        ws.cell(row=i, column=1).fill = fill(DARK)
+        c = ws.cell(row=i, column=2, value=value)
+        c.font = Font(name="Calibri", bold=True, size=11, color=color)
+        c.fill = fill(DARK)
+        ws.row_dimensions[i].height = 22
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # Sheet 2 — Interviewer Performance
+    # ═══════════════════════════════════════════════════════════════════════════
+    wi = wb.create_sheet("Interviewer Performance")
+    wi.sheet_view.showGridLines = False
+
+    headers = [
+        "Code", "Name", "Supervisor", "Region",
+        "Interviews", "Dur Flags", "SL Flags", "Flag Rate",
+        "BC Sessions", "BC Errors", "Listen-ins", "LI Pass", "LI Fail",
+        "Approved", "Cancelled", "Avg Duration (min)", "Risk",
+    ]
+    col_widths = [12, 22, 20, 14, 12, 12, 10, 11, 12, 11, 12, 10, 10, 12, 12, 18, 8]
+
+    for col, (h, w) in enumerate(zip(headers, col_widths), 1):
+        wi.column_dimensions[get_column_letter(col)].width = w
+        c = wi.cell(row=1, column=col, value=h)
+        c.fill = fill(DARK)
+        c.font = hdr_font()
+        c.alignment = Alignment(horizontal="center", vertical="center")
+    wi.row_dimensions[1].height = 22
+    wi.freeze_panes = "A2"
+
+    for r_idx, r in enumerate(rows, start=2):
+        rate = r["flag_rate"]
+        row_fill = fill(MID) if r_idx % 2 == 0 else fill("1E2135")
+        vals = [
+            r["code"], r["name"] or "", r["supervisor_name"] or "",
+            r["region"] or "", r["total_interviews"],
+            r["duration_flags"], r["sl_flags"],
+            f"{rate}%" if r["total_interviews"] > 0 else "—",
+            r["bc_count"], r["bc_errors"],
+            r["li_count"], r["li_pass"], r["li_fail"],
+            r["approved"], r["cancelled"],
+            r["avg_duration"] if r["total_interviews"] > 0 else "—",
+            ("HIGH" if rate >= 15 else "MED" if rate >= 8 else "LOW") if r["total_interviews"] > 0 else "—",
+        ]
+        for col, val in enumerate(vals, 1):
+            c = wi.cell(row=r_idx, column=col, value=val)
+            c.fill = row_fill
+            c.font = cell_font()
+            c.alignment = Alignment(vertical="center")
+        # Flag-rate cell (col 8) and Risk cell (col 17) get color treatment
+        if r["total_interviews"] > 0:
+            for col in (8, 17):
+                wi.cell(row=r_idx, column=col).fill = risk_fill(rate)
+                wi.cell(row=r_idx, column=col).font = risk_font(rate)
+                wi.cell(row=r_idx, column=col).alignment = Alignment(horizontal="center", vertical="center")
+        wi.row_dimensions[r_idx].height = 18
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # Sheet 3 — Supervisor Summary
+    # ═══════════════════════════════════════════════════════════════════════════
+    ws3 = wb.create_sheet("Supervisor Summary")
+    ws3.sheet_view.showGridLines = False
+
+    sup_headers = ["Supervisor", "Interviewers", "Total Interviews", "Total Flags", "Avg Flag Rate", "BC Errors"]
+    sup_widths  = [22, 14, 18, 14, 16, 12]
+    for col, (h, w) in enumerate(zip(sup_headers, sup_widths), 1):
+        ws3.column_dimensions[get_column_letter(col)].width = w
+        c = ws3.cell(row=1, column=col, value=h)
+        c.fill = fill(DARK); c.font = hdr_font()
+        c.alignment = Alignment(horizontal="center", vertical="center")
+    ws3.row_dimensions[1].height = 22
+    ws3.freeze_panes = "A2"
+
+    for r_idx, s in enumerate(by_sup, start=2):
+        rate = s["flag_rate"]
+        row_fill = fill(MID) if r_idx % 2 == 0 else fill("1E2135")
+        vals = [s["supervisor_name"], s["interviewer_count"], s["total_interviews"],
+                s["total_flags"], f"{rate}%", s["bc_errors"]]
+        for col, val in enumerate(vals, 1):
+            c = ws3.cell(row=r_idx, column=col, value=val)
+            c.fill = row_fill; c.font = cell_font()
+            c.alignment = Alignment(vertical="center")
+        if s["total_interviews"] > 0:
+            for col in (5,):
+                ws3.cell(row=r_idx, column=col).fill = risk_fill(rate)
+                ws3.cell(row=r_idx, column=col).font = risk_font(rate)
+                ws3.cell(row=r_idx, column=col).alignment = Alignment(horizontal="center", vertical="center")
+        ws3.row_dimensions[r_idx].height = 18
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    fname = f"interviewer_report_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
 @router.get("/interviewers/{interviewer_code}/metrics")
 def get_interviewer_metrics(interviewer_code: str, user: dict = Depends(get_current_user)):
     _require_db()

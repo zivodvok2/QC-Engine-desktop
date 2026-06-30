@@ -13,6 +13,8 @@ import { ProjectDetail, ADMIN_ROLES } from './ProjectDetail'
 import { InterviewerDirectory } from './InterviewerDirectory'
 import { AdminTab } from './tabs/AdminTab'
 
+const NAVY = '#1B2A4A'
+
 export function Dashboard() {
   const {
     authToken, authUser,
@@ -30,112 +32,112 @@ export function Dashboard() {
 
   return (
     <div className="flex h-full overflow-hidden">
-      {/* Left sidebar */}
-      <aside className="w-52 shrink-0 bg-surface border-r border-line flex flex-col overflow-hidden">
-        {/* Back button — hidden on dashboard subdomain */}
-        {!IS_DASHBOARD_DOMAIN && (
-          <button
-            onClick={() => setDashboardMode(false)}
-            className="flex items-center gap-2 px-4 py-3 text-sm text-muted hover:text-tx hover:bg-surface2 transition-colors border-b border-line"
-          >
-            <ArrowLeft size={13} />
-            QC Engine
-          </button>
-        )}
-
-        {/* Overview button */}
-        <button
-          onClick={() => setDashboardView('overview')}
-          className={`flex items-center gap-2 px-4 py-2.5 text-sm transition-colors ${
-            dashboardView === 'overview'
-              ? 'text-accent bg-accent/10 border-r-2 border-accent'
-              : 'text-muted hover:text-tx hover:bg-surface2'
-          }`}
-        >
-          <LayoutDashboard size={13} />
-          Overview
-        </button>
-
-        {/* Interviewers button */}
-        <button
-          onClick={() => setDashboardView('interviewers')}
-          className={`flex items-center gap-2 px-4 py-2.5 text-sm transition-colors ${
-            dashboardView === 'interviewers'
-              ? 'text-accent bg-accent/10 border-r-2 border-accent'
-              : 'text-muted hover:text-tx hover:bg-surface2'
-          }`}
-        >
-          <Users size={13} />
-          Interviewers
-        </button>
-
-        {isAdmin && (
-          <button
-            onClick={() => setDashboardView('admin')}
-            className={`flex items-center gap-2 px-4 py-2.5 text-sm transition-colors ${
-              dashboardView === 'admin'
-                ? 'text-accent bg-accent/10 border-r-2 border-accent'
-                : 'text-muted hover:text-tx hover:bg-surface2'
-            }`}
-          >
-            <Settings size={13} />
-            Admin
-          </button>
-        )}
-
-        <div className="px-3 py-2 mt-1">
-          <p className="text-[10px] text-muted uppercase tracking-wider">Projects</p>
+      {/* ── Ipsos navy sidebar ─────────────────────────────────────────────── */}
+      <aside
+        className="w-56 shrink-0 flex flex-col overflow-hidden"
+        style={{ backgroundColor: NAVY }}
+      >
+        {/* Branding strip */}
+        <div className="px-5 py-4 border-b border-white/10">
+          <p className="text-white font-semibold text-sm tracking-wide">Servallab</p>
+          <p className="text-white/50 text-xs mt-0.5">QC Dashboard</p>
         </div>
 
+        {/* User badge */}
+        {authUser && (
+          <div className="px-5 py-3 border-b border-white/10">
+            <div className="flex items-center gap-2">
+              <div className="w-7 h-7 rounded-full bg-accent flex items-center justify-center text-white text-xs font-bold shrink-0">
+                {authUser.name?.[0]?.toUpperCase() ?? 'U'}
+              </div>
+              <div className="min-w-0">
+                <p className="text-white text-xs font-medium truncate">{authUser.name}</p>
+                <p className="text-white/50 text-[10px] truncate capitalize">{authUser.role.replace(/_/g, ' ')}</p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Navigation */}
+        <nav className="px-2 py-3 space-y-0.5">
+          <p className="px-2 text-[10px] text-white/40 uppercase tracking-widest mb-2 font-medium">Navigation</p>
+
+          {!IS_DASHBOARD_DOMAIN && (
+            <button
+              onClick={() => setDashboardMode(false)}
+              className="nav-item w-full text-left"
+            >
+              <ArrowLeft size={14} /> QC Engine
+            </button>
+          )}
+
+          <button
+            onClick={() => setDashboardView('overview')}
+            className={dashboardView === 'overview' ? 'nav-item-active w-full text-left' : 'nav-item w-full text-left'}
+          >
+            <LayoutDashboard size={14} /> Overview
+          </button>
+
+          <button
+            onClick={() => setDashboardView('interviewers')}
+            className={dashboardView === 'interviewers' ? 'nav-item-active w-full text-left' : 'nav-item w-full text-left'}
+          >
+            <Users size={14} /> Interviewers
+          </button>
+
+          {isAdmin && (
+            <button
+              onClick={() => setDashboardView('admin')}
+              className={dashboardView === 'admin' ? 'nav-item-active w-full text-left' : 'nav-item w-full text-left'}
+            >
+              <Settings size={14} /> Admin
+            </button>
+          )}
+        </nav>
+
         {/* Project list */}
-        <div className="flex-1 overflow-y-auto">
+        <div className="px-2 flex-1 overflow-y-auto">
+          <p className="px-2 text-[10px] text-white/40 uppercase tracking-widest mb-2 font-medium">Projects</p>
+
           {!token ? (
             <button
               onClick={() => openLogin()}
-              className="w-full flex items-center gap-2 px-4 py-3 text-xs text-muted hover:text-accent transition-colors"
+              className="nav-item w-full text-left text-xs"
             >
-              <LogIn size={12} /> Sign in to view projects
+              <LogIn size={13} /> Sign in
             </button>
           ) : isLoading ? (
-            <div className="flex items-center gap-2 px-4 py-3 text-muted text-xs">
-              <Loader2 size={12} className="animate-spin" /> Loading…
+            <div className="flex items-center gap-2 px-2 py-2 text-white/40 text-xs">
+              <Loader2 size={11} className="animate-spin" /> Loading…
             </div>
           ) : (
             summary.map((p: ProjectSummary) => (
               <button
                 key={p.id}
                 onClick={() => setDashboardProject(p.id)}
-                className={`w-full flex items-center gap-2 px-4 py-2 text-left transition-colors ${
+                className={`w-full flex items-center gap-2 px-2 py-2 text-left rounded-lg text-xs transition-colors mb-0.5 ${
                   dashboardView === 'project' && dashboardProjectId === p.id
-                    ? 'text-accent bg-accent/10 border-r-2 border-accent'
-                    : 'text-muted hover:text-tx hover:bg-surface2'
+                    ? 'bg-accent/20 text-white border-r-2 border-accent font-medium'
+                    : 'text-white/60 hover:text-white hover:bg-white/10'
                 }`}
               >
                 <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-                  p.status === 'active' ? 'bg-accent' : p.status === 'closed' ? 'bg-muted' : 'bg-warning'
+                  p.status === 'active' ? 'bg-accent' : p.status === 'closed' ? 'bg-white/30' : 'bg-white/50'
                 }`} />
-                <span className="text-xs leading-snug truncate">{p.name}</span>
+                <span className="leading-snug truncate">{p.name}</span>
               </button>
             ))
           )}
         </div>
-
-        {/* Auth info */}
-        {authUser && (
-          <div className="px-4 py-3 border-t border-line">
-            <p className="text-[10px] text-muted truncate">{authUser.name}</p>
-            <p className="text-[9px] text-muted/60 truncate">{authUser.role.replace(/_/g, ' ')}</p>
-          </div>
-        )}
       </aside>
 
-      {/* Main content */}
-      <main className="flex-1 overflow-auto">
-        <div className="p-6">
-          {dashboardView === 'overview' && <Overview onSelectProject={setDashboardProject} />}
-          {dashboardView === 'project' && dashboardProjectId !== null && <ProjectDetail id={dashboardProjectId} />}
-          {dashboardView === 'interviewers' && <InterviewerDirectory />}
-          {dashboardView === 'admin' && isAdmin && <AdminTab />}
+      {/* ── Main content ──────────────────────────────────────────────────── */}
+      <main className="flex-1 overflow-auto bg-bg">
+        <div className="p-6 max-w-7xl">
+          {dashboardView === 'overview'      && <Overview onSelectProject={setDashboardProject} />}
+          {dashboardView === 'project'       && dashboardProjectId !== null && <ProjectDetail id={dashboardProjectId} />}
+          {dashboardView === 'interviewers'  && <InterviewerDirectory />}
+          {dashboardView === 'admin'         && isAdmin && <AdminTab />}
         </div>
       </main>
     </div>
