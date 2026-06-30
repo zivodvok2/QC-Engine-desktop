@@ -6,20 +6,39 @@ primary_region = "iad"
 
 [env]
   PORT = "8000"
+  # SQLite lives on the persistent volume — survives deploys
+  DB_PATH = "/data/qc_dashboard.db"
+  # Set ALLOWED_ORIGINS in `fly secrets set` to your Vercel URL
+  # e.g. https://your-app.vercel.app  (comma-separated for multiple)
+  ALLOWED_ORIGINS = "*"
+
+# Persistent volume for the SQLite database
+[[mounts]]
+  source = "qc_data"
+  destination = "/data"
 
 [http_service]
   internal_port = 8000
   force_https = true
-  auto_stop_machines = false
+  # Scale to zero when idle — keeps free tier usage low
+  auto_stop_machines = true
   auto_start_machines = true
-  min_machines_running = 1
+  min_machines_running = 0
 
   [http_service.concurrency]
-    type = "connections"
+    type = "requests"
     hard_limit = 25
     soft_limit = 20
 
+  [[http_service.checks]]
+    grace_period = "15s"
+    interval = "30s"
+    method = "GET"
+    path = "/health"
+    timeout = "5s"
+
+# Free tier: shared-cpu-1x, 256 MB RAM
 [[vm]]
   cpu_kind = "shared"
   cpus = 1
-  memory_mb = 512
+  memory_mb = 256
