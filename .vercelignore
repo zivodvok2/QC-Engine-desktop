@@ -1,0 +1,12 @@
+*.py
+*.pyc
+__pycache__/
+requirements*.txt
+dashboard/
+routers/
+core/
+checks/
+tests/
+assets/
+outputs/
+data/
