@@ -1,42 +1,54 @@
 """
-Read/write access to the dashboard's SQLite database for the FastAPI app.
+Read/write access to the dashboard's PostgreSQL database for the FastAPI app.
 Mirrors dashboard/database.py logic — all functions needed by routers.
 """
 import json
 import os
-import sqlite3
 import uuid
-from pathlib import Path
 from typing import Optional
 
-DB_PATH = os.environ.get(
-    "DB_PATH",
-    str(Path(__file__).parent / "dashboard" / "qc_dashboard.db"),
-)
+import psycopg2
+import psycopg2.errors
+import psycopg2.extras
+
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
 
 
-def get_conn():
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys=ON")
-    return conn
+class _Conn:
+    """Wraps a psycopg2 connection to mimic SQLite's conn.execute() API."""
+
+    def __init__(self, dsn: str):
+        self._conn = psycopg2.connect(dsn)
+
+    def execute(self, sql: str, params=None):
+        cur = self._conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute(sql, params)
+        return cur
+
+    def commit(self):
+        self._conn.commit()
+
+    def close(self):
+        self._conn.close()
+
+
+def get_conn() -> _Conn:
+    return _Conn(DATABASE_URL)
 
 
 def db_available() -> bool:
-    """Return True if the dashboard database file exists."""
-    return Path(DB_PATH).exists()
+    return True
 
 
 # ── Internal helpers ───────────────────────────────────────────────────────────
 
-def _safe_add_column(conn, table: str, column: str, col_type: str):
+def _safe_add_column(conn: _Conn, table: str, column: str, col_type: str):
     """Add a column if it doesn't already exist. Safe to call repeatedly."""
     try:
-        existing = [row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()]
-        if column not in existing:
-            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
-            conn.commit()
+        conn.execute(
+            f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {col_type}"
+        )
+        conn.commit()
     except Exception:
         pass
 
@@ -44,7 +56,7 @@ def _safe_add_column(conn, table: str, column: str, col_type: str):
 def _log_upload(conn, upload_id, project_id, report_type, uploaded_by, filename, row_count, wave_label=None):
     conn.execute(
         """INSERT INTO upload_log (upload_id, project_id, report_type, uploaded_by, filename, row_count, wave_label)
-           VALUES (?,?,?,?,?,?,?)""",
+           VALUES (%s,%s,%s,%s,%s,%s,%s)""",
         (upload_id, project_id, report_type, uploaded_by, filename, row_count, wave_label or None),
     )
 
@@ -52,28 +64,22 @@ def _log_upload(conn, upload_id, project_id, report_type, uploaded_by, filename,
 # ── Users ──────────────────────────────────────────────────────────────────────
 
 def get_user_by_email(email: str) -> Optional[dict]:
-    if not db_available():
-        return None
     conn = get_conn()
     row = conn.execute(
-        "SELECT * FROM users WHERE email=? AND is_active=1", (email,)
+        "SELECT * FROM users WHERE email=%s AND is_active=1", (email,)
     ).fetchone()
     conn.close()
     return dict(row) if row else None
 
 
 def get_user_by_id(user_id: int) -> Optional[dict]:
-    if not db_available():
-        return None
     conn = get_conn()
-    row = conn.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+    row = conn.execute("SELECT * FROM users WHERE id=%s", (user_id,)).fetchone()
     conn.close()
     return dict(row) if row else None
 
 
 def get_all_users() -> list:
-    if not db_available():
-        return []
     conn = get_conn()
     rows = conn.execute("SELECT * FROM users ORDER BY full_name").fetchall()
     conn.close()
@@ -84,12 +90,14 @@ def create_user(email: str, password_hash: str, full_name: str, role: str, creat
     conn = get_conn()
     try:
         conn.execute(
-            "INSERT INTO users (email, password_hash, full_name, role, created_by) VALUES (?,?,?,?,?)",
+            "INSERT INTO users (email, password_hash, full_name, role, created_by) VALUES (%s,%s,%s,%s,%s)",
             (email, password_hash, full_name, role, created_by),
         )
         conn.commit()
         return True, None
-    except sqlite3.IntegrityError:
+    except psycopg2.errors.UniqueViolation:
+        return False, "Email already registered."
+    except Exception:
         return False, "Email already registered."
     finally:
         conn.close()
@@ -98,7 +106,7 @@ def create_user(email: str, password_hash: str, full_name: str, role: str, creat
 def set_user_otp(user_id: int, otp_hash: str, expires_at_iso: str):
     conn = get_conn()
     conn.execute(
-        "UPDATE users SET otp_code=?, otp_expires_at=? WHERE id=?",
+        "UPDATE users SET otp_code=%s, otp_expires_at=%s WHERE id=%s",
         (otp_hash, expires_at_iso, user_id),
     )
     conn.commit()
@@ -107,28 +115,28 @@ def set_user_otp(user_id: int, otp_hash: str, expires_at_iso: str):
 
 def clear_user_otp(user_id: int):
     conn = get_conn()
-    conn.execute("UPDATE users SET otp_code=NULL, otp_expires_at=NULL WHERE id=?", (user_id,))
+    conn.execute("UPDATE users SET otp_code=NULL, otp_expires_at=NULL WHERE id=%s", (user_id,))
     conn.commit()
     conn.close()
 
 
 def set_2fa_enabled(user_id: int, enabled: bool):
     conn = get_conn()
-    conn.execute("UPDATE users SET totp_enabled=? WHERE id=?", (1 if enabled else 0, user_id))
+    conn.execute("UPDATE users SET totp_enabled=%s WHERE id=%s", (1 if enabled else 0, user_id))
     conn.commit()
     conn.close()
 
 
 def update_user_role(user_id: int, role: str):
     conn = get_conn()
-    conn.execute("UPDATE users SET role=? WHERE id=?", (role, user_id))
+    conn.execute("UPDATE users SET role=%s WHERE id=%s", (role, user_id))
     conn.commit()
     conn.close()
 
 
 def toggle_user_active(user_id: int, is_active: int):
     conn = get_conn()
-    conn.execute("UPDATE users SET is_active=? WHERE id=?", (is_active, user_id))
+    conn.execute("UPDATE users SET is_active=%s WHERE id=%s", (is_active, user_id))
     conn.commit()
     conn.close()
 
@@ -136,8 +144,6 @@ def toggle_user_active(user_id: int, is_active: int):
 # ── Projects ───────────────────────────────────────────────────────────────────
 
 def get_all_projects() -> list:
-    if not db_available():
-        return []
     conn = get_conn()
     rows = conn.execute("SELECT * FROM projects ORDER BY status, name").fetchall()
     conn.close()
@@ -145,19 +151,15 @@ def get_all_projects() -> list:
 
 
 def get_project(project_id: int) -> Optional[dict]:
-    if not db_available():
-        return None
     conn = get_conn()
-    row = conn.execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone()
+    row = conn.execute("SELECT * FROM projects WHERE id=%s", (project_id,)).fetchone()
     conn.close()
     return dict(row) if row else None
 
 
 def get_project_by_name(name: str) -> Optional[dict]:
-    if not db_available():
-        return None
     conn = get_conn()
-    row = conn.execute("SELECT * FROM projects WHERE name=?", (name,)).fetchone()
+    row = conn.execute("SELECT * FROM projects WHERE name=%s", (name,)).fetchone()
     conn.close()
     return dict(row) if row else None
 
@@ -165,10 +167,10 @@ def get_project_by_name(name: str) -> Optional[dict]:
 def create_project(name: str, created_by: int) -> int:
     conn = get_conn()
     cur = conn.execute(
-        "INSERT INTO projects (name, created_by) VALUES (?,?)",
+        "INSERT INTO projects (name, created_by) VALUES (%s,%s) RETURNING id",
         (name, created_by),
     )
-    project_id = cur.lastrowid
+    project_id = cur.fetchone()["id"]
     conn.commit()
     conn.close()
     return project_id
@@ -197,13 +199,13 @@ def create_project_full(
             backcheck_target, listenin_target, accompaniment_target,
             loi_min_minutes, loi_pct_threshold, flag_warning_pct, flag_critical_pct,
             created_by)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
         (name, job_number, client, sample_target, start_date, end_date,
          backcheck_target, listenin_target, accompaniment_target,
          loi_min_minutes, loi_pct_threshold, flag_warning_pct, flag_critical_pct,
          created_by),
     )
-    project_id = cur.lastrowid
+    project_id = cur.fetchone()["id"]
     conn.commit()
     conn.close()
     return project_id
@@ -218,20 +220,18 @@ def update_project(project_id: int, **kwargs):
     if not fields:
         return
     conn = get_conn()
-    sets = ", ".join(f"{k}=?" for k in fields)
-    conn.execute(f"UPDATE projects SET {sets} WHERE id=?", (*fields.values(), project_id))
+    sets = ", ".join(f"{k}=%s" for k in fields)
+    conn.execute(f"UPDATE projects SET {sets} WHERE id=%s", (*fields.values(), project_id))
     conn.commit()
     conn.close()
 
 
 def get_project_assignees(project_id: int) -> list:
-    if not db_available():
-        return []
     conn = get_conn()
     rows = conn.execute(
         """SELECT u.id, u.email, u.full_name, u.role FROM users u
            JOIN project_assignments pa ON pa.user_id=u.id
-           WHERE pa.project_id=?""",
+           WHERE pa.project_id=%s""",
         (project_id,),
     ).fetchall()
     conn.close()
@@ -242,7 +242,8 @@ def assign_user_to_project(project_id: int, user_id: int, assigned_by: int):
     conn = get_conn()
     try:
         conn.execute(
-            "INSERT OR IGNORE INTO project_assignments (project_id, user_id, assigned_by) VALUES (?,?,?)",
+            """INSERT INTO project_assignments (project_id, user_id, assigned_by)
+               VALUES (%s,%s,%s) ON CONFLICT DO NOTHING""",
             (project_id, user_id, assigned_by),
         )
         conn.commit()
@@ -253,7 +254,7 @@ def assign_user_to_project(project_id: int, user_id: int, assigned_by: int):
 def remove_user_from_project(project_id: int, user_id: int):
     conn = get_conn()
     conn.execute(
-        "DELETE FROM project_assignments WHERE project_id=? AND user_id=?",
+        "DELETE FROM project_assignments WHERE project_id=%s AND user_id=%s",
         (project_id, user_id),
     )
     conn.commit()
@@ -288,7 +289,7 @@ def insert_quality_records(
         conn.execute(
             f"""INSERT INTO quality_report_records
                 (project_id, upload_id, uploaded_by, {', '.join(all_cols)})
-                VALUES (?,?,?,{','.join('?' * len(all_cols))})""",
+                VALUES (%s,%s,%s,{','.join(['%s'] * len(all_cols))})""",
             (project_id, uid, uploaded_by, *[r.get(c) for c in std_cols], extra_json),
         )
     _log_upload(conn, uid, project_id, "quality_report", uploaded_by, filename, len(records), wave_label)
@@ -298,11 +299,9 @@ def insert_quality_records(
 
 
 def get_quality_records(project_id: int) -> list:
-    if not db_available():
-        return []
     conn = get_conn()
     rows = conn.execute(
-        "SELECT * FROM quality_report_records WHERE project_id=? ORDER BY interview_date, interviewer_id",
+        "SELECT * FROM quality_report_records WHERE project_id=%s ORDER BY interview_date, interviewer_id",
         (project_id,),
     ).fetchall()
     conn.close()
@@ -310,11 +309,9 @@ def get_quality_records(project_id: int) -> list:
 
 
 def get_quality_instance_ids(project_id: int) -> set:
-    if not db_available():
-        return set()
     conn = get_conn()
     rows = conn.execute(
-        "SELECT DISTINCT instance_id FROM quality_report_records WHERE project_id=? AND instance_id IS NOT NULL",
+        "SELECT DISTINCT instance_id FROM quality_report_records WHERE project_id=%s AND instance_id IS NOT NULL",
         (project_id,),
     ).fetchall()
     conn.close()
@@ -342,7 +339,7 @@ def insert_backcheck_records(
         conn.execute(
             f"""INSERT INTO backcheck_records
                 (project_id, upload_id, uploaded_by, {', '.join(all_cols)})
-                VALUES (?,?,?,{','.join('?' * len(all_cols))})""",
+                VALUES (%s,%s,%s,{','.join(['%s'] * len(all_cols))})""",
             (project_id, uid, uploaded_by, *[r.get(c) for c in all_cols]),
         )
     _log_upload(conn, uid, project_id, "backcheck", uploaded_by, filename, len(records), wave_label)
@@ -352,11 +349,9 @@ def insert_backcheck_records(
 
 
 def get_backcheck_records(project_id: int) -> list:
-    if not db_available():
-        return []
     conn = get_conn()
     rows = conn.execute(
-        "SELECT * FROM backcheck_records WHERE project_id=? ORDER BY interview_date",
+        "SELECT * FROM backcheck_records WHERE project_id=%s ORDER BY interview_date",
         (project_id,),
     ).fetchall()
     conn.close()
@@ -383,7 +378,7 @@ def insert_listen_in_record(
         """INSERT INTO listen_in_records
            (project_id, upload_id, logged_by, instance_id, interviewer_id,
             region, listen_date, listen_type, result, issues_noted, action_taken)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
         (project_id, upload_id, logged_by, instance_id, interviewer_id,
          region, str(listen_date), listen_type, result, issues_noted, action_taken),
     )
@@ -406,7 +401,7 @@ def insert_listen_in_batch(
         conn.execute(
             f"""INSERT INTO listen_in_records
                 (project_id, upload_id, logged_by, {', '.join(cols)})
-                VALUES (?,?,?,{','.join('?' * len(cols))})""",
+                VALUES (%s,%s,%s,{','.join(['%s'] * len(cols))})""",
             (project_id, uid, logged_by, *[r.get(c) for c in cols]),
         )
     _log_upload(conn, uid, project_id, "listen_in", logged_by, filename, len(records), wave_label)
@@ -416,11 +411,9 @@ def insert_listen_in_batch(
 
 
 def get_listen_in_records(project_id: int) -> list:
-    if not db_available():
-        return []
     conn = get_conn()
     rows = conn.execute(
-        "SELECT * FROM listen_in_records WHERE project_id=? ORDER BY listen_date DESC",
+        "SELECT * FROM listen_in_records WHERE project_id=%s ORDER BY listen_date DESC",
         (project_id,),
     ).fetchall()
     conn.close()
@@ -429,7 +422,7 @@ def get_listen_in_records(project_id: int) -> list:
 
 def delete_listen_in_record(record_id: int):
     conn = get_conn()
-    conn.execute("DELETE FROM listen_in_records WHERE id=?", (record_id,))
+    conn.execute("DELETE FROM listen_in_records WHERE id=%s", (record_id,))
     conn.commit()
     conn.close()
 
@@ -437,11 +430,9 @@ def delete_listen_in_record(record_id: int):
 # ── Performance & timing records ───────────────────────────────────────────────
 
 def get_performance_records(project_id: int) -> list:
-    if not db_available():
-        return []
     conn = get_conn()
     rows = conn.execute(
-        "SELECT * FROM performance_records WHERE project_id=? ORDER BY region, interviewer_id",
+        "SELECT * FROM performance_records WHERE project_id=%s ORDER BY region, interviewer_id",
         (project_id,),
     ).fetchall()
     conn.close()
@@ -449,11 +440,9 @@ def get_performance_records(project_id: int) -> list:
 
 
 def get_timing_records(project_id: int) -> list:
-    if not db_available():
-        return []
     conn = get_conn()
     rows = conn.execute(
-        "SELECT * FROM timing_records WHERE project_id=? ORDER BY interview_date",
+        "SELECT * FROM timing_records WHERE project_id=%s ORDER BY interview_date",
         (project_id,),
     ).fetchall()
     conn.close()
@@ -461,11 +450,9 @@ def get_timing_records(project_id: int) -> list:
 
 
 def get_cancelled_records(project_id: int) -> list:
-    if not db_available():
-        return []
     conn = get_conn()
     rows = conn.execute(
-        "SELECT * FROM cancelled_interview_records WHERE project_id=? ORDER BY interview_date",
+        "SELECT * FROM cancelled_interview_records WHERE project_id=%s ORDER BY interview_date",
         (project_id,),
     ).fetchall()
     conn.close()
@@ -474,8 +461,6 @@ def get_cancelled_records(project_id: int) -> list:
 
 def get_interviewer_code_set() -> set:
     """Return the set of all known interviewer_codes in the registry."""
-    if not db_available():
-        return set()
     conn = get_conn()
     rows = conn.execute("SELECT interviewer_code FROM interviewers").fetchall()
     conn.close()
@@ -485,14 +470,12 @@ def get_interviewer_code_set() -> set:
 # ── Upload log ─────────────────────────────────────────────────────────────────
 
 def get_upload_log(project_id: Optional[int] = None) -> list:
-    if not db_available():
-        return []
     conn = get_conn()
     if project_id:
         rows = conn.execute(
             """SELECT ul.*, u.full_name as uploader_name FROM upload_log ul
                LEFT JOIN users u ON u.id=ul.uploaded_by
-               WHERE ul.project_id=? ORDER BY ul.upload_date DESC""",
+               WHERE ul.project_id=%s ORDER BY ul.upload_date DESC""",
             (project_id,),
         ).fetchall()
     else:
@@ -509,16 +492,14 @@ def get_upload_log(project_id: Optional[int] = None) -> list:
 
 def lock_upload(upload_id: str):
     conn = get_conn()
-    conn.execute("UPDATE upload_log SET is_locked=1 WHERE upload_id=?", (upload_id,))
+    conn.execute("UPDATE upload_log SET is_locked=1 WHERE upload_id=%s", (upload_id,))
     conn.commit()
     conn.close()
 
 
 def is_upload_locked(upload_id: str) -> bool:
-    if not db_available():
-        return False
     conn = get_conn()
-    row = conn.execute("SELECT is_locked FROM upload_log WHERE upload_id=?", (upload_id,)).fetchone()
+    row = conn.execute("SELECT is_locked FROM upload_log WHERE upload_id=%s", (upload_id,)).fetchone()
     conn.close()
     return bool(row and row["is_locked"])
 
@@ -536,8 +517,8 @@ def delete_upload(upload_id: str, report_type: str):
     if not table:
         return
     conn = get_conn()
-    conn.execute(f"DELETE FROM {table} WHERE upload_id=?", (upload_id,))
-    conn.execute("DELETE FROM upload_log WHERE upload_id=?", (upload_id,))
+    conn.execute(f"DELETE FROM {table} WHERE upload_id=%s", (upload_id,))
+    conn.execute("DELETE FROM upload_log WHERE upload_id=%s", (upload_id,))
     conn.commit()
     conn.close()
 
@@ -556,13 +537,12 @@ def delete_wave_records(project_id: int, wave_label: str, report_type: str):
         return
     conn = get_conn()
     upload_ids = [r["upload_id"] for r in conn.execute(
-        "SELECT upload_id FROM upload_log WHERE project_id=? AND wave_label=? AND report_type=?",
+        "SELECT upload_id FROM upload_log WHERE project_id=%s AND wave_label=%s AND report_type=%s",
         (project_id, wave_label, report_type),
     ).fetchall()]
     if upload_ids:
-        ph = ",".join("?" * len(upload_ids))
-        conn.execute(f"DELETE FROM {table} WHERE upload_id IN ({ph})", upload_ids)
-        conn.execute(f"DELETE FROM upload_log WHERE upload_id IN ({ph})", upload_ids)
+        conn.execute(f"DELETE FROM {table} WHERE upload_id = ANY(%s)", (upload_ids,))
+        conn.execute("DELETE FROM upload_log WHERE upload_id = ANY(%s)", (upload_ids,))
         conn.commit()
     conn.close()
 
@@ -571,8 +551,6 @@ def delete_wave_records(project_id: int, wave_label: str, report_type: str):
 
 def get_dashboard_summary() -> list:
     """Summary stats for all projects — used on the main dashboard overview."""
-    if not db_available():
-        return []
     conn = get_conn()
     projects = conn.execute("SELECT * FROM projects ORDER BY status, name").fetchall()
     result = []
@@ -584,19 +562,19 @@ def get_dashboard_summary() -> list:
             "SUM(CASE WHEN approval_status='Approved' THEN 1 ELSE 0 END) as approved, "
             "SUM(CASE WHEN approval_status='Cancelled' THEN 1 ELSE 0 END) as cancelled, "
             "SUM(CASE WHEN duration_flag='Flag' THEN 1 ELSE 0 END) as flagged "
-            "FROM quality_report_records WHERE project_id=?",
+            "FROM quality_report_records WHERE project_id=%s",
             (pid,),
         ).fetchone()
 
         bc = conn.execute(
-            "SELECT COUNT(*) as total FROM backcheck_records WHERE project_id=?",
+            "SELECT COUNT(*) as total FROM backcheck_records WHERE project_id=%s",
             (pid,),
         ).fetchone()
 
         perf = conn.execute(
             "SELECT SUM(accompaniments) as accompaniments, "
             "SUM(interview_completes) as completes "
-            "FROM performance_records WHERE project_id=?",
+            "FROM performance_records WHERE project_id=%s",
             (pid,),
         ).fetchone()
 
@@ -612,7 +590,7 @@ def get_dashboard_summary() -> list:
         acc_rate = round(acc / completes * 100, 1) if completes > 0 else 0
 
         li = conn.execute(
-            "SELECT COUNT(*) as total FROM listen_in_records WHERE project_id=?",
+            "SELECT COUNT(*) as total FROM listen_in_records WHERE project_id=%s",
             (pid,),
         ).fetchone()
         li_count = li["total"] or 0
@@ -635,17 +613,15 @@ def get_dashboard_summary() -> list:
     return result
 
 
-# ── Activity feed ──────────────────────────────────────────────────────────────
+# ── Schema init ────────────────────────────────────────────────────────────────
 
 def init_tables():
-    """Create the full base schema (mirrors dashboard/database.py::init_db) plus
-    extended tables, and apply additive migrations. This is the only schema-init
-    path the FastAPI app runs, so it must be self-sufficient — it cannot assume
-    dashboard/database.py's init_db() has ever executed against this DB file."""
+    """Create the full base schema and apply additive migrations."""
     conn = get_conn()
-    conn.executescript("""
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    tables = [
+        """CREATE TABLE IF NOT EXISTS users (
+            id SERIAL PRIMARY KEY,
             email TEXT UNIQUE NOT NULL,
             password_hash TEXT NOT NULL,
             full_name TEXT NOT NULL,
@@ -657,10 +633,9 @@ def init_tables():
             totp_enabled INTEGER DEFAULT 0,
             otp_code TEXT,
             otp_expires_at TEXT
-        );
-
-        CREATE TABLE IF NOT EXISTS projects (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+        )""",
+        """CREATE TABLE IF NOT EXISTS projects (
+            id SERIAL PRIMARY KEY,
             name TEXT NOT NULL,
             job_number TEXT,
             client TEXT,
@@ -678,19 +653,17 @@ def init_tables():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             created_by INTEGER REFERENCES users(id),
             column_config TEXT
-        );
-
-        CREATE TABLE IF NOT EXISTS project_assignments (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+        )""",
+        """CREATE TABLE IF NOT EXISTS project_assignments (
+            id SERIAL PRIMARY KEY,
             project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
             user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
             assigned_by INTEGER REFERENCES users(id),
             assigned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(project_id, user_id)
-        );
-
-        CREATE TABLE IF NOT EXISTS quality_report_records (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+        )""",
+        """CREATE TABLE IF NOT EXISTS quality_report_records (
+            id SERIAL PRIMARY KEY,
             project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
             upload_id TEXT NOT NULL,
             uploaded_by INTEGER REFERENCES users(id),
@@ -714,10 +687,9 @@ def init_tables():
             approval_status TEXT,
             qc_comments TEXT,
             extra_data TEXT
-        );
-
-        CREATE TABLE IF NOT EXISTS listen_in_records (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+        )""",
+        """CREATE TABLE IF NOT EXISTS listen_in_records (
+            id SERIAL PRIMARY KEY,
             project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
             upload_id TEXT,
             logged_by INTEGER REFERENCES users(id),
@@ -730,10 +702,9 @@ def init_tables():
             result TEXT,
             issues_noted TEXT,
             action_taken TEXT
-        );
-
-        CREATE TABLE IF NOT EXISTS backcheck_records (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+        )""",
+        """CREATE TABLE IF NOT EXISTS backcheck_records (
+            id SERIAL PRIMARY KEY,
             project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
             upload_id TEXT NOT NULL,
             uploaded_by INTEGER REFERENCES users(id),
@@ -764,10 +735,9 @@ def init_tables():
             error_11 INTEGER DEFAULT 0,
             error_12 INTEGER DEFAULT 0,
             error_13 INTEGER DEFAULT 0
-        );
-
-        CREATE TABLE IF NOT EXISTS cancelled_interview_records (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+        )""",
+        """CREATE TABLE IF NOT EXISTS cancelled_interview_records (
+            id SERIAL PRIMARY KEY,
             project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
             upload_id TEXT NOT NULL,
             uploaded_by INTEGER REFERENCES users(id),
@@ -799,10 +769,9 @@ def init_tables():
             backcheck_result_telephone TEXT,
             backcheck_result_f2f TEXT,
             backcheck_result_independent TEXT
-        );
-
-        CREATE TABLE IF NOT EXISTS performance_records (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+        )""",
+        """CREATE TABLE IF NOT EXISTS performance_records (
+            id SERIAL PRIMARY KEY,
             project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
             upload_id TEXT NOT NULL,
             uploaded_by INTEGER REFERENCES users(id),
@@ -822,10 +791,9 @@ def init_tables():
             backcheck_f2f_infield INTEGER DEFAULT 0,
             backcheck_total INTEGER DEFAULT 0,
             backcheck_completed INTEGER DEFAULT 0
-        );
-
-        CREATE TABLE IF NOT EXISTS timing_records (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+        )""",
+        """CREATE TABLE IF NOT EXISTS timing_records (
+            id SERIAL PRIMARY KEY,
             project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
             upload_id TEXT NOT NULL,
             uploaded_by INTEGER REFERENCES users(id),
@@ -835,10 +803,9 @@ def init_tables():
             region TEXT,
             interview_date DATE,
             duration_minutes REAL
-        );
-
-        CREATE TABLE IF NOT EXISTS upload_log (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+        )""",
+        """CREATE TABLE IF NOT EXISTS upload_log (
+            id SERIAL PRIMARY KEY,
             upload_id TEXT NOT NULL,
             project_id INTEGER REFERENCES projects(id),
             report_type TEXT NOT NULL,
@@ -849,27 +816,28 @@ def init_tables():
             notes TEXT,
             wave_label TEXT,
             is_locked INTEGER DEFAULT 0
-        );
-
-        CREATE TABLE IF NOT EXISTS supervisors (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+        )""",
+        """CREATE TABLE IF NOT EXISTS supervisors (
+            id SERIAL PRIMARY KEY,
             name TEXT NOT NULL,
             email TEXT,
             phone TEXT,
             region TEXT,
-            created_at TEXT DEFAULT (datetime('now'))
-        );
-
-        CREATE TABLE IF NOT EXISTS interviewers (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at TIMESTAMP DEFAULT NOW()
+        )""",
+        """CREATE TABLE IF NOT EXISTS interviewers (
+            id SERIAL PRIMARY KEY,
             interviewer_code TEXT UNIQUE NOT NULL,
             name TEXT,
             supervisor_id INTEGER REFERENCES supervisors(id) ON DELETE SET NULL,
             region TEXT,
             is_active INTEGER DEFAULT 1,
-            created_at TEXT DEFAULT (datetime('now'))
-        );
-    """)
+            created_at TIMESTAMP DEFAULT NOW()
+        )""",
+    ]
+
+    for sql in tables:
+        conn.execute(sql)
     conn.commit()
 
     # Additive migrations — safe to run repeatedly, cover DBs created before
@@ -888,17 +856,14 @@ def init_tables():
     _safe_add_column(conn, "upload_log", "notes", "TEXT")
     _safe_add_column(conn, "upload_log", "wave_label", "TEXT")
     _safe_add_column(conn, "upload_log", "is_locked", "INTEGER DEFAULT 0")
-    conn.commit()
 
-    # Seed a default admin if no users exist at all — otherwise a fresh
-    # FastAPI-only deployment has no way to ever create an admin account,
-    # since /auth/register always assigns the 'other' role.
-    existing = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
-    if existing == 0:
+    # Seed a default admin if no users exist.
+    row = conn.execute("SELECT COUNT(*) as cnt FROM users").fetchone()
+    if (row["cnt"] or 0) == 0:
         import bcrypt
         pw = bcrypt.hashpw(b"admin1234", bcrypt.gensalt()).decode()
         conn.execute(
-            "INSERT INTO users (email, password_hash, full_name, role) VALUES (?,?,?,?)",
+            "INSERT INTO users (email, password_hash, full_name, role) VALUES (%s,%s,%s,%s)",
             ("admin@example.com", pw, "System Admin", "qc_executive"),
         )
         conn.commit()
@@ -926,7 +891,7 @@ def insert_performance_records(
         conn.execute(
             f"""INSERT INTO performance_records
                 (project_id, upload_id, uploaded_by, {', '.join(cols)})
-                VALUES (?,?,?,{','.join('?' * len(cols))})""",
+                VALUES (%s,%s,%s,{','.join(['%s'] * len(cols))})""",
             (project_id, uid, uploaded_by, *[r.get(c) for c in cols]),
         )
     _log_upload(conn, uid, project_id, "performance", uploaded_by, filename, len(records), wave_label)
@@ -949,7 +914,7 @@ def insert_timing_records(
         conn.execute(
             f"""INSERT INTO timing_records
                 (project_id, upload_id, uploaded_by, {', '.join(cols)})
-                VALUES (?,?,?,{','.join('?' * len(cols))})""",
+                VALUES (%s,%s,%s,{','.join(['%s'] * len(cols))})""",
             (project_id, uid, uploaded_by, *[r.get(c) for c in cols]),
         )
     _log_upload(conn, uid, project_id, "timing", uploaded_by, filename, len(records), wave_label)
@@ -980,7 +945,7 @@ def insert_cancelled_records(
         conn.execute(
             f"""INSERT INTO cancelled_interview_records
                 (project_id, upload_id, uploaded_by, {', '.join(cols)})
-                VALUES (?,?,?,{','.join('?' * len(cols))})""",
+                VALUES (%s,%s,%s,{','.join(['%s'] * len(cols))})""",
             (project_id, uid, uploaded_by, *[r.get(c) for c in cols]),
         )
     _log_upload(conn, uid, project_id, "cancelled_interviews", uploaded_by, filename, len(records), wave_label)
@@ -992,8 +957,6 @@ def insert_cancelled_records(
 # ── Supervisors ────────────────────────────────────────────────────────────────
 
 def get_all_supervisors() -> list:
-    if not db_available():
-        return []
     conn = get_conn()
     rows = conn.execute("SELECT * FROM supervisors ORDER BY name").fetchall()
     conn.close()
@@ -1003,11 +966,11 @@ def get_all_supervisors() -> list:
 def create_supervisor(name: str, email: Optional[str] = None, phone: Optional[str] = None, region: Optional[str] = None) -> int:
     conn = get_conn()
     cur = conn.execute(
-        "INSERT INTO supervisors (name, email, phone, region) VALUES (?,?,?,?)",
+        "INSERT INTO supervisors (name, email, phone, region) VALUES (%s,%s,%s,%s) RETURNING id",
         (name, email, phone, region),
     )
+    sid = cur.fetchone()["id"]
     conn.commit()
-    sid = cur.lastrowid
     conn.close()
     return sid
 
@@ -1015,24 +978,24 @@ def create_supervisor(name: str, email: Optional[str] = None, phone: Optional[st
 def update_supervisor(supervisor_id: int, **kwargs):
     if not kwargs:
         return
-    fields = ", ".join(f"{k}=?" for k in kwargs)
+    fields = ", ".join(f"{k}=%s" for k in kwargs)
     conn = get_conn()
-    conn.execute(f"UPDATE supervisors SET {fields} WHERE id=?", (*kwargs.values(), supervisor_id))
+    conn.execute(f"UPDATE supervisors SET {fields} WHERE id=%s", (*kwargs.values(), supervisor_id))
     conn.commit()
     conn.close()
 
 
 def delete_supervisor(supervisor_id: int):
     conn = get_conn()
-    conn.execute("UPDATE interviewers SET supervisor_id=NULL WHERE supervisor_id=?", (supervisor_id,))
-    conn.execute("DELETE FROM supervisors WHERE id=?", (supervisor_id,))
+    conn.execute("UPDATE interviewers SET supervisor_id=NULL WHERE supervisor_id=%s", (supervisor_id,))
+    conn.execute("DELETE FROM supervisors WHERE id=%s", (supervisor_id,))
     conn.commit()
     conn.close()
 
 
 def upsert_supervisors_bulk(names: list) -> dict:
     """Find-or-create supervisors by name. Returns {name: id} mapping."""
-    if not db_available() or not names:
+    if not names:
         return {}
     conn = get_conn()
     result: dict = {}
@@ -1040,12 +1003,12 @@ def upsert_supervisors_bulk(names: list) -> dict:
         name = str(raw).strip()
         if not name or name.lower() in ("none", "null", "nan", ""):
             continue
-        existing = conn.execute("SELECT id FROM supervisors WHERE name=?", (name,)).fetchone()
+        existing = conn.execute("SELECT id FROM supervisors WHERE name=%s", (name,)).fetchone()
         if existing:
             result[name] = existing["id"]
         else:
-            cur = conn.execute("INSERT INTO supervisors (name) VALUES (?)", (name,))
-            result[name] = cur.lastrowid
+            cur = conn.execute("INSERT INTO supervisors (name) VALUES (%s) RETURNING id", (name,))
+            result[name] = cur.fetchone()["id"]
     conn.commit()
     conn.close()
     return result
@@ -1054,8 +1017,6 @@ def upsert_supervisors_bulk(names: list) -> dict:
 # ── Interviewers ───────────────────────────────────────────────────────────────
 
 def get_all_interviewers() -> list:
-    if not db_available():
-        return []
     conn = get_conn()
     rows = conn.execute("""
         SELECT i.*, s.name AS supervisor_name
@@ -1076,22 +1037,22 @@ def upsert_interviewer(
 ) -> int:
     conn = get_conn()
     existing = conn.execute(
-        "SELECT id FROM interviewers WHERE interviewer_code=?", (interviewer_code,)
+        "SELECT id FROM interviewers WHERE interviewer_code=%s", (interviewer_code,)
     ).fetchone()
     if existing:
         conn.execute(
             """UPDATE interviewers
-               SET name=COALESCE(?,name), supervisor_id=?, region=COALESCE(?,region), is_active=?
-               WHERE interviewer_code=?""",
+               SET name=COALESCE(%s,name), supervisor_id=%s, region=COALESCE(%s,region), is_active=%s
+               WHERE interviewer_code=%s""",
             (name, supervisor_id, region, is_active, interviewer_code),
         )
         iid = existing["id"]
     else:
         cur = conn.execute(
-            "INSERT INTO interviewers (interviewer_code, name, supervisor_id, region, is_active) VALUES (?,?,?,?,?)",
+            "INSERT INTO interviewers (interviewer_code, name, supervisor_id, region, is_active) VALUES (%s,%s,%s,%s,%s) RETURNING id",
             (interviewer_code, name, supervisor_id, region, is_active),
         )
-        iid = cur.lastrowid
+        iid = cur.fetchone()["id"]
     conn.commit()
     conn.close()
     return iid
@@ -1099,15 +1060,13 @@ def upsert_interviewer(
 
 def get_interviewer_metrics(interviewer_code: str) -> dict:
     """Cross-project performance metrics for one interviewer."""
-    if not db_available():
-        return {}
     conn = get_conn()
 
     info = conn.execute("""
         SELECT i.*, s.name AS supervisor_name
         FROM interviewers i
         LEFT JOIN supervisors s ON i.supervisor_id = s.id
-        WHERE i.interviewer_code=?
+        WHERE i.interviewer_code=%s
     """, (interviewer_code,)).fetchone()
 
     qr = conn.execute("""
@@ -1117,21 +1076,21 @@ def get_interviewer_metrics(interviewer_code: str) -> dict:
                SUM(CASE WHEN approval_status='Approved' THEN 1 ELSE 0 END) AS approved,
                SUM(CASE WHEN approval_status='Cancelled' THEN 1 ELSE 0 END) AS cancelled,
                AVG(duration_minutes) AS avg_duration
-        FROM quality_report_records WHERE interviewer_id=?
+        FROM quality_report_records WHERE interviewer_id=%s
     """, (interviewer_code,)).fetchone()
 
     bc = conn.execute("""
         SELECT COUNT(*) AS bc_count,
                COALESCE(SUM(error_01+error_02+error_03+error_04+error_05+error_06+error_07+
                             error_08+error_09+error_10+error_11+error_12+error_13),0) AS total_errors
-        FROM backcheck_records WHERE interviewer_id=?
+        FROM backcheck_records WHERE interviewer_id=%s
     """, (interviewer_code,)).fetchone()
 
     li = conn.execute("""
         SELECT COUNT(*) AS li_count,
                SUM(CASE WHEN result='Pass' THEN 1 ELSE 0 END) AS li_pass,
                SUM(CASE WHEN result='Fail' THEN 1 ELSE 0 END) AS li_fail
-        FROM listen_in_records WHERE interviewer_id=?
+        FROM listen_in_records WHERE interviewer_id=%s
     """, (interviewer_code,)).fetchone()
 
     by_project = conn.execute("""
@@ -1142,7 +1101,7 @@ def get_interviewer_metrics(interviewer_code: str) -> dict:
                SUM(CASE WHEN qr.approval_status='Approved' THEN 1 ELSE 0 END) AS approved
         FROM quality_report_records qr
         JOIN projects p ON qr.project_id = p.id
-        WHERE qr.interviewer_id=?
+        WHERE qr.interviewer_id=%s
         GROUP BY p.id, p.name
         ORDER BY p.name
     """, (interviewer_code,)).fetchall()
@@ -1163,20 +1122,17 @@ def get_interviewer_analytics(
     region: Optional[str] = None,
 ) -> dict:
     """All interviewers with aggregated metrics in one query. Filterable by project/supervisor/region."""
-    if not db_available():
-        return {"interviewers": [], "by_supervisor": [], "projects": []}
-
     conn = get_conn()
-    pfilter = "AND project_id = ?" if project_id else ""
+    pfilter = "AND project_id = %s" if project_id else ""
     parg: list = [project_id] if project_id else []
 
     where_parts: list[str] = []
     where_args: list = []
     if supervisor_id is not None:
-        where_parts.append("i.supervisor_id = ?")
+        where_parts.append("i.supervisor_id = %s")
         where_args.append(supervisor_id)
     if region:
-        where_parts.append("i.region = ?")
+        where_parts.append("i.region = %s")
         where_args.append(region)
     where_clause = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
 
@@ -1215,14 +1171,14 @@ def get_interviewer_analytics(
                COALESCE(qr.sl_flags, 0) AS sl_flags,
                COALESCE(qr.approved, 0) AS approved,
                COALESCE(qr.cancelled, 0) AS cancelled,
-               ROUND(COALESCE(qr.avg_duration, 0), 1) AS avg_duration,
+               ROUND(COALESCE(qr.avg_duration, 0)::numeric, 1) AS avg_duration,
                COALESCE(bc.bc_count, 0) AS bc_count,
                COALESCE(bc.bc_errors, 0) AS bc_errors,
                COALESCE(li.li_count, 0) AS li_count,
                COALESCE(li.li_pass, 0) AS li_pass,
                COALESCE(li.li_fail, 0) AS li_fail,
                CASE WHEN COALESCE(qr.total_interviews, 0) > 0
-                    THEN ROUND((COALESCE(qr.duration_flags,0)+COALESCE(qr.sl_flags,0))*100.0/qr.total_interviews,1)
+                    THEN ROUND(((COALESCE(qr.duration_flags,0)+COALESCE(qr.sl_flags,0))*100.0/qr.total_interviews)::numeric,1)
                     ELSE 0 END AS flag_rate
         FROM interviewers i
         LEFT JOIN supervisors s ON i.supervisor_id = s.id
@@ -1236,7 +1192,6 @@ def get_interviewer_analytics(
     rows = conn.execute(sql, parg + parg + parg + where_args).fetchall()
     interviewers = [dict(r) for r in rows]
 
-    # Supervisor-level aggregates derived from the filtered result
     sup_map: dict = {}
     for r in interviewers:
         sn = r.get("supervisor_name") or "Unassigned"
@@ -1260,8 +1215,6 @@ def get_interviewer_analytics(
 # ── Activity feed ──────────────────────────────────────────────────────────────
 
 def get_project_activity(project_id: Optional[int] = None, limit: int = 20) -> list:
-    if not db_available():
-        return []
     conn = get_conn()
     if project_id:
         rows = conn.execute(
@@ -1270,8 +1223,8 @@ def get_project_activity(project_id: Optional[int] = None, limit: int = 20) -> l
                FROM upload_log ul
                LEFT JOIN projects p ON p.id=ul.project_id
                LEFT JOIN users u ON u.id=ul.uploaded_by
-               WHERE ul.project_id=?
-               ORDER BY ul.upload_date DESC LIMIT ?""",
+               WHERE ul.project_id=%s
+               ORDER BY ul.upload_date DESC LIMIT %s""",
             (project_id, limit),
         ).fetchall()
     else:
@@ -1281,7 +1234,7 @@ def get_project_activity(project_id: Optional[int] = None, limit: int = 20) -> l
                FROM upload_log ul
                LEFT JOIN projects p ON p.id=ul.project_id
                LEFT JOIN users u ON u.id=ul.uploaded_by
-               ORDER BY ul.upload_date DESC LIMIT ?""",
+               ORDER BY ul.upload_date DESC LIMIT %s""",
             (limit,),
         ).fetchall()
     conn.close()

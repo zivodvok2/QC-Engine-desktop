@@ -1,6 +1,6 @@
 import os
 
-DB_PATH = os.environ.get("DB_PATH", "qc_dashboard.db")
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
 
 ROLES = {
     "qc_executive": "QC Executive",

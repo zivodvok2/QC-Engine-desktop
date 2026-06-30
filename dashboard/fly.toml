@@ -6,11 +6,8 @@ primary_region = "iad"
 
 [env]
   PORT = "8501"
-  DB_PATH = "/data/qc_dashboard.db"
-
-[mounts]
-  source = "dashboard_data"
-  destination = "/data"
+  # Set DATABASE_URL in `fly secrets set` to your Neon connection string:
+  # fly secrets set DATABASE_URL="postgresql://user:pass@ep-xxx.region.aws.neon.tech/dbname?sslmode=require"
 
 [http_service]
   internal_port = 8501

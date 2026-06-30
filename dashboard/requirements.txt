@@ -7,3 +7,4 @@ bcrypt>=4.1.2
 xlsxwriter>=3.1.9
 pyreadstat>=1.2.6
 APScheduler>=3.10.4
+psycopg2-binary>=2.9.0
