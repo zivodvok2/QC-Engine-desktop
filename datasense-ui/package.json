@@ -22,6 +22,10 @@
   "engines": {
     "node": "20.x"
   },
+  "overrides": {
+    "browserslist": "^4.24.0",
+    "node-releases": "^2.0.18"
+  },
   "devDependencies": {
     "@playwright/test": "^1.60.0",
     "@types/react": "^18.3.0",
