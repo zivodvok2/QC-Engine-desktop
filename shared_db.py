@@ -10,15 +10,24 @@ from typing import Optional
 import psycopg2
 import psycopg2.errors
 import psycopg2.extras
+from psycopg2 import pool as pg_pool
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
+
+_pool: pg_pool.ThreadedConnectionPool | None = None
+
+def _get_pool() -> pg_pool.ThreadedConnectionPool:
+    global _pool
+    if _pool is None:
+        _pool = pg_pool.ThreadedConnectionPool(1, 10, DATABASE_URL)
+    return _pool
 
 
 class _Conn:
     """Wraps a psycopg2 connection to mimic SQLite's conn.execute() API."""
 
-    def __init__(self, dsn: str):
-        self._conn = psycopg2.connect(dsn)
+    def __init__(self):
+        self._conn = _get_pool().getconn()
 
     def execute(self, sql: str, params=None):
         cur = self._conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
@@ -29,11 +38,11 @@ class _Conn:
         self._conn.commit()
 
     def close(self):
-        self._conn.close()
+        _get_pool().putconn(self._conn)
 
 
 def get_conn() -> _Conn:
-    return _Conn(DATABASE_URL)
+    return _Conn()
 
 
 def db_available() -> bool:
