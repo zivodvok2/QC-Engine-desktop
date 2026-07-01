@@ -5,21 +5,26 @@ import {
   ResponsiveContainer, Cell, Legend,
 } from 'recharts'
 import {
-  Users, Plus, Trash2, ChevronRight, X, Loader2,
+  Users, Plus, Trash2, X, Loader2,
   TrendingUp, AlertTriangle, ChevronDown, ChevronUp, Activity, Download,
+  ShieldOff, AlertCircle, ArrowUpCircle, ShieldCheck, ShieldAlert,
 } from 'lucide-react'
 import { useAppStore } from '../../store/appStore'
 import {
   getSupervisors, getInterviewers, getInterviewerMetrics,
   getInterviewerAnalytics, downloadInterviewerReport,
   createSupervisor, deleteSupervisor, upsertInterviewer,
+  blockInterviewer, unblockInterviewer, warnInterviewer, escalateInterviewer,
+  getInterviewerActions,
   type Supervisor, type Interviewer, type InterviewerMetrics, type ItvAnalyticsRow,
+  type InterviewerAction,
 } from '../../api/dashboard'
 
 const C = {
-  accent: '#00B5A3', critical: '#1B2A4A', warning: '#00B5A3',
-  muted: '#6B7280', surface: '#FFFFFF', surface2: '#F1F4F8', line: '#E2E6ED',
-  tx: '#1B2A4A', info: '#1B2A4A',
+  accent: '#00B5A3', muted: '#6B7280', surface: '#FFFFFF',
+  surface2: '#F1F4F8', line: '#E2E6ED', tx: '#1B2A4A',
+  // True RAG colors
+  red: '#EF4444', orange: '#F97316', green: '#10B981',
 }
 
 const TooltipStyle = {
@@ -31,15 +36,205 @@ const TooltipStyle = {
 const ADMIN_ROLES = new Set(['qc_executive', 'operations_manager'])
 
 function riskColor(rate: number) {
-  if (rate >= 15) return C.critical
-  if (rate >= 8) return C.warning
-  return C.accent
+  if (rate >= 15) return C.red
+  if (rate >= 8) return C.orange
+  return C.green
 }
 
 function riskLabel(rate: number) {
-  if (rate >= 15) return 'HIGH'
-  if (rate >= 8) return 'MED'
-  return 'LOW'
+  if (rate >= 15) return 'HIGH RISK'
+  if (rate >= 8) return 'MEDIUM'
+  return 'LOW RISK'
+}
+
+function RiskBadge({ rate, interviews }: { rate: number; interviews: number }) {
+  if (interviews === 0) return <span className="text-xs text-muted">—</span>
+  const color = riskColor(rate)
+  const label = riskLabel(rate)
+  return (
+    <span
+      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold tracking-wide"
+      style={{ backgroundColor: `${color}20`, color, border: `1px solid ${color}50` }}
+    >
+      <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: color }} />
+      {label}
+    </span>
+  )
+}
+
+// ── Interviewer action modal ────────────────────────────────────────────────────
+
+type ActionType = 'block' | 'unblock' | 'warn' | 'escalate'
+
+function ActionModal({
+  code,
+  isBlocked,
+  onClose,
+}: {
+  code: string
+  isBlocked: boolean
+  onClose: () => void
+}) {
+  const { authToken } = useAppStore()
+  const token = authToken ?? ''
+  const qc = useQueryClient()
+  const [action, setAction] = useState<ActionType | null>(null)
+  const [message, setMessage] = useState('')
+  const [notifyEmail, setNotifyEmail] = useState(false)
+
+  const { data: history = [] } = useQuery({
+    queryKey: ['itv-actions', code],
+    queryFn: () => getInterviewerActions(code, token),
+    enabled: !!token,
+  })
+
+  const mut = useMutation({
+    mutationFn: async () => {
+      if (!action) return
+      if (action === 'block') await blockInterviewer(code, message || undefined, token)
+      else if (action === 'unblock') await unblockInterviewer(code, token)
+      else if (action === 'warn') await warnInterviewer(code, message || undefined, notifyEmail, token)
+      else if (action === 'escalate') await escalateInterviewer(code, message || undefined, token)
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['itv-analytics'] })
+      qc.invalidateQueries({ queryKey: ['itv-actions', code] })
+      setAction(null)
+      setMessage('')
+    },
+  })
+
+  const actionConfig: Record<ActionType, { label: string; color: string; icon: React.ElementType; desc: string }> = {
+    block: { label: 'Block Interviewer', color: C.red, icon: ShieldOff, desc: 'Prevents this interviewer from being assigned to future projects.' },
+    unblock: { label: 'Remove Block', color: C.green, icon: ShieldCheck, desc: 'Re-activates this interviewer and allows project assignment.' },
+    warn: { label: 'Send Warning', color: C.orange, icon: AlertCircle, desc: 'Records a formal warning. Optionally emails their supervisor.' },
+    escalate: { label: 'Escalate to Senior Manager', color: C.orange, icon: ArrowUpCircle, desc: 'Escalates this interviewer\'s issues to a senior manager for review.' },
+  }
+
+  const ACTION_LABELS: Record<string, string> = {
+    block: 'Blocked', unblock: 'Unblocked', warning: 'Warning Issued', escalation: 'Escalated',
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+      onClick={e => { if (e.target === e.currentTarget) onClose() }}
+    >
+      <div className="bg-surface border border-line rounded-xl w-full max-w-lg shadow-2xl flex flex-col max-h-[85vh]">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-line shrink-0">
+          <div className="flex items-center gap-2">
+            <ShieldOff size={14} className="text-muted" />
+            <span className="font-bold text-sm text-tx">Manage Interviewer: {code}</span>
+          </div>
+          <button onClick={onClose} className="p-1.5 text-muted hover:text-tx rounded transition-colors">
+            <X size={14} />
+          </button>
+        </div>
+
+        <div className="overflow-y-auto p-5 space-y-4">
+          {/* Action buttons */}
+          {!action ? (
+            <div className="grid grid-cols-2 gap-3">
+              {(isBlocked ? ['unblock', 'warn', 'escalate'] : ['block', 'warn', 'escalate']).map((a) => {
+                const cfg = actionConfig[a as ActionType]
+                const Icon = cfg.icon
+                return (
+                  <button
+                    key={a}
+                    onClick={() => setAction(a as ActionType)}
+                    className="flex flex-col items-start gap-1.5 p-3 rounded-lg border transition-all hover:shadow-sm text-left"
+                    style={{ borderColor: `${cfg.color}40`, backgroundColor: `${cfg.color}08` }}
+                  >
+                    <div className="flex items-center gap-2">
+                      <Icon size={14} style={{ color: cfg.color }} />
+                      <span className="text-xs font-bold" style={{ color: cfg.color }}>{cfg.label}</span>
+                    </div>
+                    <p className="text-[10px] text-muted leading-tight">{cfg.desc}</p>
+                  </button>
+                )
+              })}
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <div className="flex items-center gap-2 p-3 rounded-lg" style={{ backgroundColor: `${actionConfig[action].color}10` }}>
+                {React.createElement(actionConfig[action].icon, { size: 14, style: { color: actionConfig[action].color } })}
+                <span className="text-sm font-bold" style={{ color: actionConfig[action].color }}>
+                  {actionConfig[action].label}
+                </span>
+              </div>
+
+              {action !== 'unblock' && (
+                <div>
+                  <label className="text-xs text-muted block mb-1">
+                    {action === 'block' ? 'Reason for blocking (optional)' :
+                     action === 'warn' ? 'Warning details' : 'Escalation notes'}
+                  </label>
+                  <textarea
+                    value={message}
+                    onChange={e => setMessage(e.target.value)}
+                    rows={3}
+                    placeholder="Add details here…"
+                    className="w-full bg-surface2 border border-line rounded-lg px-3 py-2 text-sm text-tx placeholder:text-muted resize-none"
+                  />
+                </div>
+              )}
+
+              {action === 'warn' && (
+                <label className="flex items-center gap-2 text-xs text-tx cursor-pointer">
+                  <input type="checkbox" checked={notifyEmail} onChange={e => setNotifyEmail(e.target.checked)} className="rounded" />
+                  Send email notification to supervisor
+                </label>
+              )}
+
+              <div className="flex gap-2">
+                <button
+                  onClick={() => mut.mutate()}
+                  disabled={mut.isPending}
+                  className="btn-primary flex items-center gap-2 text-sm"
+                  style={{ backgroundColor: actionConfig[action].color, borderColor: actionConfig[action].color }}
+                >
+                  {mut.isPending ? <Loader2 size={13} className="animate-spin" /> : null}
+                  Confirm
+                </button>
+                <button onClick={() => { setAction(null); setMessage('') }} className="btn-ghost text-sm">Back</button>
+              </div>
+            </div>
+          )}
+
+          {/* Action history */}
+          {(history as InterviewerAction[]).length > 0 && (
+            <div className="border-t border-line pt-4">
+              <p className="text-xs text-muted font-medium mb-2">Action History</p>
+              <div className="space-y-2">
+                {(history as InterviewerAction[]).map(h => (
+                  <div key={h.id} className="flex items-start gap-2 text-xs">
+                    <span
+                      className="px-1.5 py-0.5 rounded text-[10px] font-bold shrink-0 mt-0.5"
+                      style={{
+                        backgroundColor: h.action_type === 'block' ? `${C.red}20` :
+                          h.action_type === 'warning' ? `${C.orange}20` :
+                          h.action_type === 'escalation' ? `${C.orange}15` : `${C.green}20`,
+                        color: h.action_type === 'block' ? C.red :
+                          h.action_type === 'warning' ? C.orange :
+                          h.action_type === 'escalation' ? C.orange : C.green,
+                      }}
+                    >
+                      {ACTION_LABELS[h.action_type] ?? h.action_type}
+                    </span>
+                    <div>
+                      <span className="text-muted">{new Date(h.created_at).toLocaleDateString()}</span>
+                      {h.performed_by_name && <span className="text-muted ml-1">by {h.performed_by_name}</span>}
+                      {h.message && <p className="text-tx mt-0.5 leading-tight">{h.message}</p>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
 }
 
 // ── Interviewer detail modal ───────────────────────────────────────────────────
@@ -106,8 +301,8 @@ function InterviewerDetailModal({ code, onClose }: { code: string; onClose: () =
                       <YAxis tick={{ fill: C.muted, fontSize: 10 }} />
                       <Tooltip {...TooltipStyle} />
                       <Bar dataKey="interviews" name="Interviews" fill={C.accent} radius={[2, 2, 0, 0]} />
-                      <Bar dataKey="dur_flags" name="Dur Flags" fill={C.critical} radius={[2, 2, 0, 0]} />
-                      <Bar dataKey="sl_flags" name="SL Flags" fill={C.warning} radius={[2, 2, 0, 0]} />
+                      <Bar dataKey="dur_flags" name="Dur Flags" fill={C.red} radius={[2, 2, 0, 0]} />
+                      <Bar dataKey="sl_flags" name="SL Flags" fill={C.orange} radius={[2, 2, 0, 0]} />
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
@@ -236,6 +431,7 @@ export function InterviewerDirectory() {
   const [filterInterviewer, setFilterInterviewer] = useState<string>('')
   const [registryOpen, setRegistryOpen] = useState(false)
   const [selectedCode, setSelectedCode] = useState<string | null>(null)
+  const [managingCode, setManagingCode] = useState<string | null>(null)
   const [showAddItv, setShowAddItv] = useState(false)
   const [showAddSup, setShowAddSup] = useState(false)
   const [downloading, setDownloading] = useState(false)
@@ -437,9 +633,9 @@ export function InterviewerDirectory() {
                     </BarChart>
                   </ResponsiveContainer>
                   <div className="flex gap-4 text-xs text-muted">
-                    {[['HIGH ≥15%', C.critical], ['MED 8–14%', C.warning], ['LOW <8%', C.accent]].map(([l, c]) => (
+                    {[['HIGH ≥15%', C.red], ['MEDIUM 8–14%', C.orange], ['LOW <8%', C.green]].map(([l, c]) => (
                       <span key={l as string} className="flex items-center gap-1.5">
-                        <span className="w-2.5 h-2.5 rounded-sm shrink-0" style={{ backgroundColor: c as string }} />
+                        <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: c as string }} />
                         {l}
                       </span>
                     ))}
@@ -484,8 +680,8 @@ export function InterviewerDirectory() {
                       <YAxis tick={{ fill: C.muted, fontSize: 10 }} />
                       <Tooltip {...TooltipStyle} />
                       <Legend wrapperStyle={{ fontSize: 10, color: C.muted }} />
-                      <Bar dataKey="dur" name="Duration Flags" stackId="a" fill={C.critical} />
-                      <Bar dataKey="sl" name="SL Flags" stackId="a" fill={C.warning} radius={[3, 3, 0, 0]} />
+                      <Bar dataKey="dur" name="Duration Flags" stackId="a" fill={C.red} />
+                      <Bar dataKey="sl" name="SL Flags" stackId="a" fill={C.orange} radius={[3, 3, 0, 0]} />
                     </BarChart>
                   </ResponsiveContainer>
                 </ChartCard>
@@ -499,8 +695,8 @@ export function InterviewerDirectory() {
                       <YAxis tick={{ fill: C.muted, fontSize: 10 }} />
                       <Tooltip {...TooltipStyle} />
                       <Legend wrapperStyle={{ fontSize: 10, color: C.muted }} />
-                      <Bar dataKey="bc_errors" name="BC Errors" fill={C.info} radius={[2, 2, 0, 0]} />
-                      <Bar dataKey="li_fail" name="LI Fail" fill={C.warning} radius={[2, 2, 0, 0]} />
+                      <Bar dataKey="bc_errors" name="BC Errors" fill={C.orange} radius={[2, 2, 0, 0]} />
+                      <Bar dataKey="li_fail" name="LI Fail" fill={C.red} radius={[2, 2, 0, 0]} />
                       <Bar dataKey="cancelled" name="Cancelled" fill={C.muted} radius={[2, 2, 0, 0]} />
                     </BarChart>
                   </ResponsiveContainer>
@@ -511,46 +707,77 @@ export function InterviewerDirectory() {
               <div className="card overflow-hidden">
                 <div className="px-4 py-3 border-b border-line flex items-center justify-between">
                   <p className="label">Interviewer Rankings</p>
-                  <p className="text-xs text-muted">Sorted by flag rate</p>
+                  <p className="text-xs text-muted">Sorted by risk level · click row for details · click Manage to take action</p>
                 </div>
+                <div className="overflow-x-auto">
                 <table className="w-full text-xs">
                   <thead>
-                    <tr className="border-b border-line text-muted bg-surface">
-                      {['Interviewer', 'Supervisor', 'Region', 'Interviews', 'Dur Flags', 'SL Flags', 'Flag Rate', 'BC Errors', 'LI Fail', 'Cancelled', 'Risk'].map(h => (
-                        <th key={h} className="text-left px-3 py-2.5 whitespace-nowrap font-normal">{h}</th>
+                    <tr className="border-b border-line text-muted bg-surface2">
+                      {['Risk', 'Interviewer', 'Supervisor', 'Region', 'Interviews', 'Dur Flags', 'SL Flags', 'Flag Rate', 'BC Errors', 'LI Fail', 'Cancelled', isAdmin ? 'Actions' : ''].filter(Boolean).map(h => (
+                        <th key={h} className="text-left px-3 py-2.5 whitespace-nowrap font-medium text-[10px] uppercase tracking-wide">{h}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
                     {tableRows.map((r: ItvAnalyticsRow) => (
-                      <tr key={r.code} onClick={() => setSelectedCode(r.code)}
-                        className="border-b border-line/30 hover:bg-surface2/60 cursor-pointer">
-                        <td className="px-3 py-2.5">
-                          <p className="font-mono text-accent text-xs">{r.code}</p>
-                          {r.name && <p className="text-muted text-xs">{r.name}</p>}
+                      <tr key={r.code}
+                        className={`border-b border-line/30 hover:bg-surface2/60 ${r.is_blocked ? 'opacity-60 bg-red-50/30' : ''}`}>
+                        <td className="px-3 py-2.5" onClick={() => setSelectedCode(r.code)}>
+                          <RiskBadge rate={r.flag_rate} interviews={r.total_interviews} />
+                          {r.is_blocked ? (
+                            <span className="mt-1 flex items-center gap-1 text-[9px] font-bold uppercase" style={{ color: C.red }}>
+                              <ShieldOff size={9} /> Blocked
+                            </span>
+                          ) : null}
                         </td>
-                        <td className="px-3 py-2.5 text-muted">{r.supervisor_name ?? '—'}</td>
-                        <td className="px-3 py-2.5 text-muted">{r.region ?? '—'}</td>
-                        <td className="px-3 py-2.5 text-tx font-medium">{r.total_interviews}</td>
-                        <td className="px-3 py-2.5 text-critical">{r.duration_flags || '—'}</td>
-                        <td className="px-3 py-2.5 text-warning">{r.sl_flags || '—'}</td>
-                        <td className="px-3 py-2.5 font-medium" style={{ color: riskColor(r.flag_rate) }}>
+                        <td className="px-3 py-2.5 cursor-pointer" onClick={() => setSelectedCode(r.code)}>
+                          <p className="font-mono text-accent text-xs font-semibold">{r.code}</p>
+                          {r.name && <p className="text-muted text-[10px]">{r.name}</p>}
+                        </td>
+                        <td className="px-3 py-2.5 text-muted cursor-pointer" onClick={() => setSelectedCode(r.code)}>{r.supervisor_name ?? '—'}</td>
+                        <td className="px-3 py-2.5 text-muted cursor-pointer" onClick={() => setSelectedCode(r.code)}>{r.region ?? '—'}</td>
+                        <td className="px-3 py-2.5 text-tx font-medium cursor-pointer" onClick={() => setSelectedCode(r.code)}>{r.total_interviews}</td>
+                        <td className="px-3 py-2.5 cursor-pointer" onClick={() => setSelectedCode(r.code)}
+                          style={{ color: r.duration_flags > 0 ? C.red : C.muted }}>
+                          {r.duration_flags || '—'}
+                        </td>
+                        <td className="px-3 py-2.5 cursor-pointer" onClick={() => setSelectedCode(r.code)}
+                          style={{ color: r.sl_flags > 0 ? C.orange : C.muted }}>
+                          {r.sl_flags || '—'}
+                        </td>
+                        <td className="px-3 py-2.5 font-bold cursor-pointer" onClick={() => setSelectedCode(r.code)}
+                          style={{ color: r.total_interviews > 0 ? riskColor(r.flag_rate) : C.muted }}>
                           {r.total_interviews > 0 ? `${r.flag_rate}%` : '—'}
                         </td>
-                        <td className="px-3 py-2.5" style={{ color: r.bc_errors > 0 ? C.info : C.muted }}>{r.bc_errors || '—'}</td>
-                        <td className="px-3 py-2.5" style={{ color: r.li_fail > 0 ? C.warning : C.muted }}>{r.li_fail || '—'}</td>
-                        <td className="px-3 py-2.5 text-muted">{r.cancelled || '—'}</td>
-                        <td className="px-3 py-2.5">
-                          {r.total_interviews > 0 ? (
-                            <span className="text-xs font-bold" style={{ color: riskColor(r.flag_rate) }}>
-                              {riskLabel(r.flag_rate)}
-                            </span>
-                          ) : <span className="text-muted">—</span>}
+                        <td className="px-3 py-2.5 cursor-pointer" onClick={() => setSelectedCode(r.code)}
+                          style={{ color: r.bc_errors > 0 ? C.orange : C.muted }}>
+                          {r.bc_errors || '—'}
                         </td>
+                        <td className="px-3 py-2.5 cursor-pointer" onClick={() => setSelectedCode(r.code)}
+                          style={{ color: r.li_fail > 0 ? C.orange : C.muted }}>
+                          {r.li_fail || '—'}
+                        </td>
+                        <td className="px-3 py-2.5 text-muted cursor-pointer" onClick={() => setSelectedCode(r.code)}>{r.cancelled || '—'}</td>
+                        {isAdmin && (
+                          <td className="px-3 py-2.5">
+                            <button
+                              onClick={() => setManagingCode(r.code)}
+                              className="text-[10px] font-bold px-2 py-1 rounded border transition-all hover:shadow-sm"
+                              style={{
+                                color: r.is_blocked ? C.green : C.red,
+                                borderColor: r.is_blocked ? `${C.green}40` : `${C.red}40`,
+                                backgroundColor: r.is_blocked ? `${C.green}08` : `${C.red}08`,
+                              }}
+                            >
+                              {r.is_blocked ? 'Unblock' : 'Manage'}
+                            </button>
+                          </td>
+                        )}
                       </tr>
                     ))}
                   </tbody>
                 </table>
+                </div>
               </div>
             </>
           )}
@@ -618,7 +845,7 @@ export function InterviewerDirectory() {
                             {itv.is_active ? 'Active' : 'Inactive'}
                           </span>
                         </td>
-                        <td className="px-4 py-2"><ChevronRight size={12} className="text-muted" /></td>
+                        <td className="px-4 py-2"><span className="text-muted text-xs">→</span></td>
                       </tr>
                     ))}
                   </tbody>
@@ -630,6 +857,13 @@ export function InterviewerDirectory() {
       )}
 
       {selectedCode && <InterviewerDetailModal code={selectedCode} onClose={() => setSelectedCode(null)} />}
+      {managingCode && (
+        <ActionModal
+          code={managingCode}
+          isBlocked={!!(rows.find(r => r.code === managingCode)?.is_blocked)}
+          onClose={() => setManagingCode(null)}
+        />
+      )}
     </div>
   )
 }

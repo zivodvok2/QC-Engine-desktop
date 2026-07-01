@@ -179,6 +179,18 @@ export interface ItvAnalyticsRow {
   li_pass: number
   li_fail: number
   flag_rate: number
+  is_blocked: number
+}
+
+export interface InterviewerAction {
+  id: number
+  interviewer_code: string
+  action_type: 'block' | 'unblock' | 'warning' | 'escalation'
+  performed_by: number | null
+  performed_by_name: string | null
+  message: string | null
+  email_sent: number
+  created_at: string
 }
 
 export interface SupAnalyticsRow {
@@ -630,6 +642,33 @@ export async function downloadTemplate(
   a.download = names[type]
   a.click()
   URL.revokeObjectURL(url)
+}
+
+// Interviewer actions
+
+export async function blockInterviewer(code: string, message: string | undefined, token: string) {
+  const { data } = await client.post(`/api/dashboard/interviewers/${encodeURIComponent(code)}/block`, { message }, { headers: authHeader(token) })
+  return data
+}
+
+export async function unblockInterviewer(code: string, token: string) {
+  const { data } = await client.post(`/api/dashboard/interviewers/${encodeURIComponent(code)}/unblock`, {}, { headers: authHeader(token) })
+  return data
+}
+
+export async function warnInterviewer(code: string, message: string | undefined, notifyEmail: boolean, token: string) {
+  const { data } = await client.post(`/api/dashboard/interviewers/${encodeURIComponent(code)}/warn`, { message, notify_email: notifyEmail }, { headers: authHeader(token) })
+  return data
+}
+
+export async function escalateInterviewer(code: string, message: string | undefined, token: string) {
+  const { data } = await client.post(`/api/dashboard/interviewers/${encodeURIComponent(code)}/escalate`, { message }, { headers: authHeader(token) })
+  return data
+}
+
+export async function getInterviewerActions(code: string, token: string): Promise<InterviewerAction[]> {
+  const { data } = await client.get<InterviewerAction[]>(`/api/dashboard/interviewers/${encodeURIComponent(code)}/actions`, { headers: authHeader(token) })
+  return data
 }
 
 // Combined report

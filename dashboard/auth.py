@@ -1,3 +1,10 @@
+import os
+import random
+import smtplib
+import string
+from datetime import datetime, timedelta
+from email.mime.text import MIMEText
+
 import bcrypt
 import streamlit as st
 import database as db
@@ -15,12 +22,36 @@ def verify_password(password: str, hashed: str) -> bool:
         return False
 
 
-def login(email: str, password: str):
-    user = db.get_user_by_email(email.strip().lower())
-    if not user:
-        return False, "Invalid email or password."
-    if not verify_password(password, user["password_hash"]):
-        return False, "Invalid email or password."
+def _generate_otp() -> str:
+    return "".join(random.choices(string.digits, k=6))
+
+
+def _send_otp_email(to_email: str, otp: str) -> bool:
+    smtp_host = os.environ.get("SMTP_HOST", "")
+    smtp_user = os.environ.get("SMTP_USER", "")
+    smtp_pass = os.environ.get("SMTP_PASS", "")
+    smtp_port = int(os.environ.get("SMTP_PORT", "587"))
+    if not smtp_host or not smtp_user:
+        return False
+    try:
+        msg = MIMEText(
+            f"Your Servallab verification code is: {otp}\n\n"
+            f"This code expires in 10 minutes.\n"
+            f"If you did not request this, ignore this email."
+        )
+        msg["Subject"] = "[Servallab] Your sign-in verification code"
+        msg["From"] = smtp_user
+        msg["To"] = to_email
+        with smtplib.SMTP(smtp_host, smtp_port) as s:
+            s.starttls()
+            s.login(smtp_user, smtp_pass)
+            s.send_message(msg)
+        return True
+    except Exception:
+        return False
+
+
+def _complete_login(user: dict):
     st.session_state["logged_in"]    = True
     st.session_state["user_id"]      = user["id"]
     st.session_state["user_email"]   = user["email"]
@@ -29,6 +60,54 @@ def login(email: str, password: str):
     st.session_state["page"]         = "dashboard"
     st.session_state["project_id"]   = None
     st.session_state["project_tab"]  = "quality_report"
+    # Clear any pending OTP state
+    for k in ["otp_pending_user_id", "otp_sent_to", "otp_expires"]:
+        st.session_state.pop(k, None)
+
+
+def login(email: str, password: str):
+    user = db.get_user_by_email(email.strip().lower())
+    if not user:
+        return False, "Invalid email or password."
+    if not verify_password(password, user["password_hash"]):
+        return False, "Invalid email or password."
+    # If 2FA is enabled, initiate OTP flow
+    if user.get("totp_enabled"):
+        otp = _generate_otp()
+        expires = (datetime.utcnow() + timedelta(minutes=10)).isoformat()
+        otp_hash = bcrypt.hashpw(otp.encode(), bcrypt.gensalt()).decode()
+        db.set_user_otp(user["id"], otp_hash, expires)
+        sent = _send_otp_email(user["email"], otp)
+        st.session_state["otp_pending_user_id"] = user["id"]
+        st.session_state["otp_sent_to"] = user["email"]
+        st.session_state["otp_expires"] = expires
+        if sent:
+            return "otp_sent", f"A 6-digit code has been sent to {user['email']}."
+        else:
+            # Email not configured — show code in warning (dev mode only)
+            st.session_state["dev_otp"] = otp
+            return "otp_sent", f"(Dev mode) Your OTP is: {otp}"
+    _complete_login(user)
+    return True, None
+
+
+def verify_otp(otp_input: str):
+    user_id = st.session_state.get("otp_pending_user_id")
+    if not user_id:
+        return False, "Session expired. Please sign in again."
+    expires_str = st.session_state.get("otp_expires", "")
+    try:
+        if datetime.utcnow() > datetime.fromisoformat(expires_str):
+            return False, "Code expired. Please sign in again."
+    except Exception:
+        return False, "Session error. Please sign in again."
+    user = db.get_user_by_id(user_id)
+    if not user or not user.get("otp_code"):
+        return False, "Invalid session."
+    if not bcrypt.checkpw(otp_input.encode(), user["otp_code"].encode()):
+        return False, "Incorrect code. Please try again."
+    db.clear_user_otp(user_id)
+    _complete_login(user)
     return True, None
 
 
@@ -88,23 +167,61 @@ def show_login_page():
         tab_login, tab_register = st.tabs(["Sign In", "Register"])
 
         with tab_login:
-            with st.form("login_form"):
-                email    = st.text_input("Email", placeholder="you@example.com")
-                password = st.text_input("Password", type="password", placeholder="••••••••")
-                submitted = st.form_submit_button(
-                    "Sign In", use_container_width=True, type="primary"
+            # ── OTP verification step ──
+            if st.session_state.get("otp_pending_user_id"):
+                sent_to = st.session_state.get("otp_sent_to", "your email")
+                st.markdown(
+                    f'<div style="background:rgba(0,181,163,0.08);border:1px solid rgba(0,181,163,0.3);'
+                    f'border-radius:6px;padding:0.6rem 0.8rem;font-size:0.82rem;color:{SL_ACCENT};'
+                    f'font-family:DM Mono,monospace;margin-bottom:0.75rem;">'
+                    f'📧 Verification code sent to <strong>{sent_to}</strong>. Enter it below.</div>',
+                    unsafe_allow_html=True,
                 )
-            if submitted:
-                ok, err = login(email, password)
-                if ok:
+                with st.form("otp_form"):
+                    otp_input = st.text_input("6-digit code", placeholder="123456", max_chars=6)
+                    otp_submitted = st.form_submit_button("Verify", use_container_width=True, type="primary")
+                if otp_submitted:
+                    ok, err = verify_otp(otp_input.strip())
+                    if ok:
+                        st.rerun()
+                    else:
+                        st.markdown(
+                            f'<div style="background:rgba(240,74,106,0.1);border:1px solid rgba(240,74,106,0.3);'
+                            f'border-radius:6px;padding:0.6rem 0.8rem;font-size:0.82rem;color:{SL_CRITICAL};'
+                            f'font-family:DM Mono,monospace;margin-top:0.5rem;">{err}</div>',
+                            unsafe_allow_html=True,
+                        )
+                if st.button("← Back to sign in", use_container_width=False):
+                    for k in ["otp_pending_user_id", "otp_sent_to", "otp_expires", "dev_otp"]:
+                        st.session_state.pop(k, None)
                     st.rerun()
-                else:
-                    st.markdown(
-                        f'<div style="background:rgba(240,74,106,0.1);border:1px solid rgba(240,74,106,0.3);'
-                        f'border-radius:6px;padding:0.6rem 0.8rem;font-size:0.82rem;color:{SL_CRITICAL};'
-                        f'font-family:DM Mono,monospace;margin-top:0.5rem;">{err}</div>',
-                        unsafe_allow_html=True,
+            else:
+                # ── Normal sign in ──
+                with st.form("login_form"):
+                    email    = st.text_input("Email", placeholder="you@example.com")
+                    password = st.text_input("Password", type="password", placeholder="••••••••")
+                    submitted = st.form_submit_button(
+                        "Sign In", use_container_width=True, type="primary"
                     )
+                if submitted:
+                    ok, err = login(email, password)
+                    if ok is True:
+                        st.rerun()
+                    elif ok == "otp_sent":
+                        st.markdown(
+                            f'<div style="background:rgba(0,181,163,0.08);border:1px solid rgba(0,181,163,0.3);'
+                            f'border-radius:6px;padding:0.6rem 0.8rem;font-size:0.82rem;color:{SL_ACCENT};'
+                            f'font-family:DM Mono,monospace;margin-top:0.5rem;">{err}</div>',
+                            unsafe_allow_html=True,
+                        )
+                        st.rerun()
+                    else:
+                        st.markdown(
+                            f'<div style="background:rgba(240,74,106,0.1);border:1px solid rgba(240,74,106,0.3);'
+                            f'border-radius:6px;padding:0.6rem 0.8rem;font-size:0.82rem;color:{SL_CRITICAL};'
+                            f'font-family:DM Mono,monospace;margin-top:0.5rem;">{err}</div>',
+                            unsafe_allow_html=True,
+                        )
 
         with tab_register:
             with st.form("register_form"):

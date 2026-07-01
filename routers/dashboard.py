@@ -3,6 +3,7 @@ Dashboard API router — serves the React dashboard UI.
 Mirrors the Streamlit dashboard/pages_modules logic via the shared SQLite DB.
 """
 import io
+import os
 import random
 import uuid
 from datetime import date, timedelta
@@ -1097,6 +1098,109 @@ def export_interviewer_report(
 def get_interviewer_metrics(interviewer_code: str, user: dict = Depends(get_current_user)):
     _require_db()
     return shared_db.get_interviewer_metrics(interviewer_code)
+
+
+# ── Interviewer block / warn / escalate ────────────────────────────────────────
+
+class InterviewerActionBody(BaseModel):
+    message: Optional[str] = None
+    notify_email: bool = False
+
+
+def _send_warning_email(code: str, message: Optional[str], sender: dict) -> bool:
+    """Send warning email to interviewer's supervisor. Returns True if sent."""
+    import smtplib
+    from email.mime.text import MIMEText
+
+    smtp_host = os.environ.get("SMTP_HOST", "")
+    smtp_user = os.environ.get("SMTP_USER", "")
+    smtp_pass = os.environ.get("SMTP_PASS", "")
+    if not smtp_host or not smtp_user:
+        return False
+
+    itv = shared_db.get_interviewer_by_code(code)
+    to_addr = itv.get("supervisor_email") if itv else None
+    if not to_addr:
+        return False
+
+    try:
+        smtp_port = int(os.environ.get("SMTP_PORT", "587"))
+        body = (
+            f"A warning has been issued for interviewer {code}.\n\n"
+            f"Details: {message or 'No additional details provided.'}\n\n"
+            f"Issued by: {sender.get('full_name', 'System Administrator')}\n"
+            f"Issued via: Servallab QC Dashboard"
+        )
+        msg = MIMEText(body)
+        msg["Subject"] = f"[Servallab] Interviewer Warning — {code}"
+        msg["From"] = smtp_user
+        msg["To"] = to_addr
+        with smtplib.SMTP(smtp_host, smtp_port) as s:
+            s.starttls()
+            s.login(smtp_user, smtp_pass)
+            s.send_message(msg)
+        return True
+    except Exception:
+        return False
+
+
+@router.post("/interviewers/{code}/block")
+def block_interviewer_action(
+    code: str,
+    body: InterviewerActionBody,
+    user: dict = Depends(get_current_user),
+):
+    _require_admin(user)
+    _require_db()
+    shared_db.block_interviewer(code, user["id"], body.message)
+    return {"status": "blocked", "code": code}
+
+
+@router.post("/interviewers/{code}/unblock")
+def unblock_interviewer_action(
+    code: str,
+    user: dict = Depends(get_current_user),
+):
+    _require_admin(user)
+    _require_db()
+    shared_db.unblock_interviewer(code, user["id"])
+    return {"status": "unblocked", "code": code}
+
+
+@router.post("/interviewers/{code}/warn")
+def warn_interviewer_action(
+    code: str,
+    body: InterviewerActionBody,
+    user: dict = Depends(get_current_user),
+):
+    _require_admin(user)
+    _require_db()
+    email_sent = False
+    if body.notify_email:
+        email_sent = _send_warning_email(code, body.message, user)
+    shared_db.add_interviewer_warning(code, user["id"], body.message, email_sent)
+    return {"status": "warned", "code": code, "email_sent": email_sent}
+
+
+@router.post("/interviewers/{code}/escalate")
+def escalate_interviewer_action(
+    code: str,
+    body: InterviewerActionBody,
+    user: dict = Depends(get_current_user),
+):
+    _require_admin(user)
+    _require_db()
+    shared_db.add_interviewer_escalation(code, user["id"], body.message)
+    return {"status": "escalated", "code": code}
+
+
+@router.get("/interviewers/{code}/actions")
+def get_interviewer_action_history(
+    code: str,
+    user: dict = Depends(get_current_user),
+):
+    _require_db()
+    return shared_db.get_interviewer_actions(code)
 
 
 # ── Timing mock-data seed ──────────────────────────────────────────────────────

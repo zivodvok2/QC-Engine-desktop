@@ -167,32 +167,38 @@ export function Overview({ onSelectProject }: Props) {
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {summary.map((p: ProjectSummary) => {
               const flagPct = p.total_submitted > 0 ? p.flagged / p.total_submitted * 100 : 0
-              const isCritical = flagPct >= (p.flag_critical_pct ?? 10)
-              const isWarning = !isCritical && flagPct >= (p.flag_warning_pct ?? 5)
+              const isCritical = p.status === 'active' && flagPct >= (p.flag_critical_pct ?? 10)
+              const isAmber = !isCritical && p.status === 'active' && (
+                flagPct >= (p.flag_warning_pct ?? 5) ||
+                (p.approved > 0 && p.backcheck_rate < p.backcheck_target * 100 * 0.5)
+              )
+              const isGreen = !isCritical && !isAmber && p.status === 'active' && p.approved > 0
+              const ragColor = isCritical ? '#EF4444' : isAmber ? '#F97316' : isGreen ? '#10B981' : '#6B7280'
+              const ragLabel = isCritical ? 'Critical' : isAmber ? 'Needs Review' : isGreen ? 'On Track' : p.status
 
               return (
                 <button
                   key={p.id}
                   onClick={() => onSelectProject(p.id)}
-                  className="card p-4 space-y-3 text-left hover:border-muted transition-colors"
+                  className="card p-4 space-y-3 text-left hover:shadow-md transition-all"
+                  style={{ borderLeft: `4px solid ${ragColor}` }}
                 >
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className={`w-2 h-2 rounded-full shrink-0 ${
-                          p.status === 'active' ? 'bg-accent' : p.status === 'closed' ? 'bg-muted' : 'bg-warning'
-                        }`} />
-                        <p className="text-sm font-medium text-tx leading-tight">{p.name}</p>
-                      </div>
-                      {p.client && <p className="text-xs text-muted mt-0.5 pl-4">{p.client}</p>}
-                      {p.job_number && <p className="text-xs text-muted pl-4">{p.job_number}</p>}
+                  {/* Header row with traffic light */}
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-semibold text-tx leading-tight truncate">{p.name}</p>
+                      {p.client && <p className="text-xs text-muted mt-0.5">{p.client}</p>}
+                      {p.job_number && <p className="text-xs text-muted">{p.job_number}</p>}
                     </div>
-                    <div className="flex flex-col items-end gap-1">
-                      {isCritical && <span className="badge-critical shrink-0">Critical</span>}
-                      {isWarning && <span className="badge-warning shrink-0">Warning</span>}
-                      {!isCritical && !isWarning && p.status === 'active' && p.approved > 0 && (
-                        <span className="text-[10px] font-medium text-accent bg-accent/10 border border-accent/30 rounded px-1.5 py-0.5 shrink-0">On Track</span>
-                      )}
+                    {/* RAG Traffic Light */}
+                    <div
+                      className="flex items-center gap-1.5 px-2.5 py-1 rounded-full shrink-0"
+                      style={{ backgroundColor: `${ragColor}18`, border: `1px solid ${ragColor}40` }}
+                    >
+                      <span className="w-2.5 h-2.5 rounded-full shrink-0 shadow-sm" style={{ backgroundColor: ragColor }} />
+                      <span className="text-[10px] font-bold uppercase tracking-wide" style={{ color: ragColor }}>
+                        {ragLabel}
+                      </span>
                     </div>
                   </div>
 
@@ -200,35 +206,37 @@ export function Overview({ onSelectProject }: Props) {
                   <div>
                     <div className="flex justify-between text-[10px] text-muted mb-1">
                       <span>Completion</span>
-                      <span>{p.completion_pct}%</span>
+                      <span className="font-medium">{p.completion_pct}% — {p.approved} / {p.sample_target}</span>
                     </div>
-                    <div className="h-1.5 bg-surface2 rounded-full overflow-hidden">
+                    <div className="h-2 bg-surface2 rounded-full overflow-hidden">
                       <div
-                        className="h-full bg-accent rounded-full transition-all"
-                        style={{ width: `${Math.min(p.completion_pct, 100)}%` }}
+                        className="h-full rounded-full transition-all"
+                        style={{
+                          width: `${Math.min(p.completion_pct, 100)}%`,
+                          backgroundColor: ragColor,
+                        }}
                       />
                     </div>
-                    <p className="text-[10px] text-muted mt-0.5">{p.approved} / {p.sample_target} approved</p>
                   </div>
 
-                  <div className="grid grid-cols-3 gap-2 text-center">
+                  <div className="grid grid-cols-3 gap-2 text-center pt-1 border-t border-line/50">
                     <div>
-                      <p className="text-[10px] text-muted">BC Rate</p>
-                      <p className={`text-xs font-bold ${
-                        p.backcheck_rate >= p.backcheck_target * 100 ? 'text-accent' : 'text-tx'
-                      }`}>{p.backcheck_rate}%</p>
+                      <p className="text-[10px] text-muted mb-0.5">Back-check</p>
+                      <p className="text-xs font-bold" style={{
+                        color: p.backcheck_rate >= p.backcheck_target * 100 ? '#10B981' : p.approved > 0 ? '#F97316' : '#6B7280'
+                      }}>{p.backcheck_rate}%</p>
                     </div>
                     <div>
-                      <p className="text-[10px] text-muted">Listen-in</p>
-                      <p className={`text-xs font-bold ${
-                        p.listenin_rate >= p.listenin_target * 100 ? 'text-accent' : 'text-tx'
-                      }`}>{p.listenin_rate}%</p>
+                      <p className="text-[10px] text-muted mb-0.5">Listen-in</p>
+                      <p className="text-xs font-bold" style={{
+                        color: p.listenin_rate >= p.listenin_target * 100 ? '#10B981' : p.approved > 0 ? '#F97316' : '#6B7280'
+                      }}>{p.listenin_rate}%</p>
                     </div>
                     <div>
-                      <p className="text-[10px] text-muted">Flagged</p>
-                      <p className={`text-xs font-bold ${p.flagged > 0 ? 'text-tx' : 'text-muted'}`}>
-                        {p.flagged}
-                      </p>
+                      <p className="text-[10px] text-muted mb-0.5">Flagged</p>
+                      <p className="text-xs font-bold" style={{
+                        color: p.flagged > 0 ? (isCritical ? '#EF4444' : '#F97316') : '#6B7280'
+                      }}>{p.flagged || '—'}</p>
                     </div>
                   </div>
                 </button>

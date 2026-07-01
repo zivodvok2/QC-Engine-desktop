@@ -1,31 +1,110 @@
 """
-Read/write access to the dashboard's PostgreSQL database for the FastAPI app.
-Mirrors dashboard/database.py logic — all functions needed by routers.
+Read/write access to the dashboard's database.
+Supports PostgreSQL (production) and SQLite (local demo via SQLITE_PATH env var
+or when DATABASE_URL is not set).
 """
 import json
 import os
+import re
 import uuid
 from typing import Optional
 
-import psycopg2
-import psycopg2.errors
-import psycopg2.extras
-from psycopg2 import pool as pg_pool
-
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
+_USE_SQLITE = not bool(DATABASE_URL)
+_SQLITE_PATH = os.environ.get("SQLITE_PATH", "qc_dashboard.db")
 
-_pool: pg_pool.ThreadedConnectionPool | None = None
+# ── SQLite adapter ─────────────────────────────────────────────────────────────
 
-def _get_pool() -> pg_pool.ThreadedConnectionPool:
-    global _pool
-    if _pool is None:
-        _pool = pg_pool.ThreadedConnectionPool(1, 10, DATABASE_URL)
-    return _pool
+def _pg_to_sqlite(sql: str) -> str:
+    """Translate PostgreSQL SQL syntax to SQLite."""
+    sql = sql.replace("%s", "?")
+    sql = re.sub(r"::\w+", "", sql)
+    sql = sql.replace("SERIAL PRIMARY KEY", "INTEGER PRIMARY KEY AUTOINCREMENT")
+    sql = re.sub(r"\s+RETURNING\s+\w+", "", sql, flags=re.IGNORECASE)
+    if "ON CONFLICT DO NOTHING" in sql:
+        sql = sql.replace(" ON CONFLICT DO NOTHING", "")
+        sql = re.sub(r"\bINSERT\s+INTO\b", "INSERT OR IGNORE INTO", sql, count=1, flags=re.IGNORECASE)
+    sql = sql.replace("NOW()", "CURRENT_TIMESTAMP")
+    return sql
 
 
-class _Conn:
-    """Wraps a psycopg2 connection to mimic SQLite's conn.execute() API."""
+class _SQLiteCursor:
+    def __init__(self, cur: "sqlite3.Cursor", is_insert: bool = False):
+        self._cur = cur
+        self._lastrowid = cur.lastrowid
+        self._is_insert = is_insert
 
+    def fetchone(self) -> Optional[dict]:
+        if self._is_insert:
+            row = self._cur.fetchone()
+            if row is None:
+                return {"id": self._lastrowid} if self._lastrowid else None
+            return dict(row)
+        row = self._cur.fetchone()
+        return dict(row) if row else None
+
+    def fetchall(self) -> list:
+        return [dict(r) for r in self._cur.fetchall()]
+
+
+_sqlite_connection = None
+
+def _get_sqlite_conn():
+    global _sqlite_connection
+    if _sqlite_connection is None:
+        import sqlite3
+        _sqlite_connection = sqlite3.connect(_SQLITE_PATH, check_same_thread=False)
+        _sqlite_connection.row_factory = sqlite3.Row
+        _sqlite_connection.execute("PRAGMA journal_mode=WAL")
+    return _sqlite_connection
+
+
+class _SQLiteConn:
+    def __init__(self):
+        self._conn = _get_sqlite_conn()
+
+    def execute(self, sql: str, params=None):
+        adapted = _pg_to_sqlite(sql)
+        is_insert = adapted.strip().upper().startswith("INSERT")
+        # Expand ANY(?) → IN (?,?,...)
+        if params and "ANY(?)" in adapted:
+            new_params = list(params)
+            for i, p in enumerate(new_params):
+                if isinstance(p, (list, tuple)):
+                    placeholders = ",".join(["?"] * len(p))
+                    adapted = adapted.replace("= ANY(?)", f"IN ({placeholders})", 1)
+                    new_params = new_params[:i] + list(p) + new_params[i + 1:]
+                    break
+            params = tuple(new_params)
+        cur = self._conn.cursor()
+        cur.execute(adapted, params or ())
+        return _SQLiteCursor(cur, is_insert)
+
+    def commit(self):
+        self._conn.commit()
+
+    def close(self):
+        pass  # Reuse the global connection
+
+
+# ── PostgreSQL adapter ─────────────────────────────────────────────────────────
+
+if not _USE_SQLITE:
+    import psycopg2
+    import psycopg2.errors
+    import psycopg2.extras
+    from psycopg2 import pool as pg_pool
+
+    _pool: "pg_pool.ThreadedConnectionPool | None" = None
+
+    def _get_pool() -> "pg_pool.ThreadedConnectionPool":
+        global _pool
+        if _pool is None:
+            _pool = pg_pool.ThreadedConnectionPool(1, 10, DATABASE_URL)
+        return _pool
+
+
+class _PGConn:
     def __init__(self):
         self._conn = _get_pool().getconn()
 
@@ -41,8 +120,8 @@ class _Conn:
         _get_pool().putconn(self._conn)
 
 
-def get_conn() -> _Conn:
-    return _Conn()
+def get_conn():
+    return _SQLiteConn() if _USE_SQLITE else _PGConn()
 
 
 def db_available() -> bool:
@@ -51,7 +130,7 @@ def db_available() -> bool:
 
 # ── Internal helpers ───────────────────────────────────────────────────────────
 
-def _safe_add_column(conn: _Conn, table: str, column: str, col_type: str):
+def _safe_add_column(conn, table: str, column: str, col_type: str):
     """Add a column if it doesn't already exist. Safe to call repeatedly."""
     try:
         conn.execute(
@@ -841,7 +920,17 @@ def init_tables():
             supervisor_id INTEGER REFERENCES supervisors(id) ON DELETE SET NULL,
             region TEXT,
             is_active INTEGER DEFAULT 1,
+            is_blocked INTEGER DEFAULT 0,
             created_at TIMESTAMP DEFAULT NOW()
+        )""",
+        """CREATE TABLE IF NOT EXISTS interviewer_actions (
+            id SERIAL PRIMARY KEY,
+            interviewer_code TEXT NOT NULL,
+            action_type TEXT NOT NULL,
+            performed_by INTEGER REFERENCES users(id),
+            message TEXT,
+            email_sent INTEGER DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )""",
     ]
 
@@ -865,6 +954,7 @@ def init_tables():
     _safe_add_column(conn, "upload_log", "notes", "TEXT")
     _safe_add_column(conn, "upload_log", "wave_label", "TEXT")
     _safe_add_column(conn, "upload_log", "is_locked", "INTEGER DEFAULT 0")
+    _safe_add_column(conn, "interviewers", "is_blocked", "INTEGER DEFAULT 0")
 
     # Seed a default admin if no users exist.
     row = conn.execute("SELECT COUNT(*) as cnt FROM users").fetchone()
@@ -1180,14 +1270,15 @@ def get_interviewer_analytics(
                COALESCE(qr.sl_flags, 0) AS sl_flags,
                COALESCE(qr.approved, 0) AS approved,
                COALESCE(qr.cancelled, 0) AS cancelled,
-               ROUND(COALESCE(qr.avg_duration, 0)::numeric, 1) AS avg_duration,
+               ROUND(COALESCE(qr.avg_duration, 0), 1) AS avg_duration,
                COALESCE(bc.bc_count, 0) AS bc_count,
                COALESCE(bc.bc_errors, 0) AS bc_errors,
                COALESCE(li.li_count, 0) AS li_count,
                COALESCE(li.li_pass, 0) AS li_pass,
                COALESCE(li.li_fail, 0) AS li_fail,
+               i.is_blocked,
                CASE WHEN COALESCE(qr.total_interviews, 0) > 0
-                    THEN ROUND(((COALESCE(qr.duration_flags,0)+COALESCE(qr.sl_flags,0))*100.0/qr.total_interviews)::numeric,1)
+                    THEN ROUND(((COALESCE(qr.duration_flags,0)+COALESCE(qr.sl_flags,0))*100.0/qr.total_interviews),1)
                     ELSE 0 END AS flag_rate
         FROM interviewers i
         LEFT JOIN supervisors s ON i.supervisor_id = s.id
@@ -1246,5 +1337,82 @@ def get_project_activity(project_id: Optional[int] = None, limit: int = 20) -> l
                ORDER BY ul.upload_date DESC LIMIT %s""",
             (limit,),
         ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+# ── Interviewer block / warn / escalate ────────────────────────────────────────
+
+def get_interviewer_by_code(code: str) -> Optional[dict]:
+    conn = get_conn()
+    row = conn.execute(
+        """SELECT i.*, s.name AS supervisor_name, s.email AS supervisor_email
+           FROM interviewers i
+           LEFT JOIN supervisors s ON i.supervisor_id = s.id
+           WHERE i.interviewer_code = %s""",
+        (code,),
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def block_interviewer(code: str, performed_by: int, message: Optional[str] = None):
+    conn = get_conn()
+    conn.execute(
+        "UPDATE interviewers SET is_blocked = 1 WHERE interviewer_code = %s",
+        (code,),
+    )
+    conn.execute(
+        "INSERT INTO interviewer_actions (interviewer_code, action_type, performed_by, message) VALUES (%s,'block',%s,%s)",
+        (code, performed_by, message),
+    )
+    conn.commit()
+    conn.close()
+
+
+def unblock_interviewer(code: str, performed_by: int):
+    conn = get_conn()
+    conn.execute(
+        "UPDATE interviewers SET is_blocked = 0 WHERE interviewer_code = %s",
+        (code,),
+    )
+    conn.execute(
+        "INSERT INTO interviewer_actions (interviewer_code, action_type, performed_by) VALUES (%s,'unblock',%s)",
+        (code, performed_by),
+    )
+    conn.commit()
+    conn.close()
+
+
+def add_interviewer_warning(code: str, performed_by: int, message: Optional[str], email_sent: bool = False):
+    conn = get_conn()
+    conn.execute(
+        "INSERT INTO interviewer_actions (interviewer_code, action_type, performed_by, message, email_sent) VALUES (%s,'warning',%s,%s,%s)",
+        (code, performed_by, message, 1 if email_sent else 0),
+    )
+    conn.commit()
+    conn.close()
+
+
+def add_interviewer_escalation(code: str, performed_by: int, message: Optional[str]):
+    conn = get_conn()
+    conn.execute(
+        "INSERT INTO interviewer_actions (interviewer_code, action_type, performed_by, message) VALUES (%s,'escalation',%s,%s)",
+        (code, performed_by, message),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_interviewer_actions(code: str) -> list:
+    conn = get_conn()
+    rows = conn.execute(
+        """SELECT ia.*, u.full_name AS performed_by_name
+           FROM interviewer_actions ia
+           LEFT JOIN users u ON u.id = ia.performed_by
+           WHERE ia.interviewer_code = %s
+           ORDER BY ia.created_at DESC""",
+        (code,),
+    ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
