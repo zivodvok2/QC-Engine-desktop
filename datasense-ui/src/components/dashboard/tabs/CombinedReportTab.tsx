@@ -12,6 +12,7 @@ import {
   type QualityRecord, type BackcheckRecord, type ListenInRecord,
 } from '../../../api/dashboard'
 import { getDashboardSummary, type ProjectSummary } from '../../../api/dashboard'
+import { FilterBar, useFilters, type FilterDef } from '../utils/tabUtils'
 
 const C = {
   accent: '#00B5A3', critical: '#1B2A4A', warning: '#00B5A3', info: '#1B2A4A',
@@ -39,6 +40,7 @@ export function CombinedReportTab({ projectId }: Props) {
   const { authToken } = useAppStore()
   const token = authToken ?? ''
   const [downloading, setDownloading] = React.useState(false)
+  const [pptDownloading, setPptDownloading] = React.useState(false)
 
   const { data: summary = [] } = useQuery({
     queryKey: ['dash-summary'],
@@ -67,8 +69,23 @@ export function CombinedReportTab({ projectId }: Props) {
 
   const isLoading = qLoading || bLoading || lLoading
 
+  // ── Filters on quality records ─────────────────────────────────────────────────
+  const { filters, filtered: filteredQ, activeCount, setFilter, clearFilters, uniqueVals } = useFilters(
+    quality as Record<string, unknown>[],
+    ['interviewer_id', 'region', 'approval_status', 'duration_flag'],
+  )
+
+  const filterDefs: FilterDef[] = [
+    { key: 'interviewer_id', label: 'Interviewer', type: 'select', options: uniqueVals['interviewer_id'] ?? [] },
+    { key: 'region', label: 'Region', type: 'select', options: uniqueVals['region'] ?? [] },
+    { key: 'approval_status', label: 'Status', type: 'select', options: uniqueVals['approval_status'] ?? [] },
+    { key: 'duration_flag', label: 'Dur. Flag', type: 'select', options: uniqueVals['duration_flag'] ?? [] },
+    { key: 'date_from', label: 'Date from', type: 'date' },
+    { key: 'date_to', label: 'Date to', type: 'date' },
+  ]
+
   // ── QC metrics ────────────────────────────────────────────────────────────────
-  const q = quality as QualityRecord[]
+  const q = filteredQ as QualityRecord[]
   const total = q.length
   const approved = q.filter(r => r.approval_status === 'Approved').length
   const pending = q.filter(r => r.approval_status === 'Pending').length
@@ -140,22 +157,50 @@ export function CombinedReportTab({ projectId }: Props) {
     }
   }
 
+  const handlePptDownload = async () => {
+    setPptDownloading(true)
+    try {
+      const res = await fetch(`/api/dashboard/projects/${projectId}/ppt`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!res.ok) throw new Error('PPT generation failed')
+      const blob = await res.blob()
+      const a = document.createElement('a')
+      a.href = URL.createObjectURL(blob)
+      a.download = `${project?.name ?? 'project'}_QC_Report.pptx`
+      a.click()
+      URL.revokeObjectURL(a.href)
+    } finally {
+      setPptDownloading(false)
+    }
+  }
+
   return (
     <div className="space-y-6">
       {/* Header with download */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-2">
         <div>
           <h3 className="text-sm font-display font-bold text-tx">Combined Project Report</h3>
           <p className="text-xs text-muted mt-0.5">Aggregates QC results, back-check, and listen-in into one view</p>
         </div>
-        <button
-          onClick={handleDownload}
-          disabled={downloading}
-          className="btn-primary flex items-center gap-2"
-        >
-          {downloading ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
-          Download Excel
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handlePptDownload}
+            disabled={pptDownloading}
+            className="btn-ghost flex items-center gap-2 text-sm"
+          >
+            {pptDownloading ? <Loader2 size={14} className="animate-spin" /> : <FileCheck size={14} />}
+            PPT Report
+          </button>
+          <button
+            onClick={handleDownload}
+            disabled={downloading}
+            className="btn-primary flex items-center gap-2"
+          >
+            {downloading ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+            Download Excel
+          </button>
+        </div>
       </div>
 
       {isLoading && (
@@ -170,6 +215,14 @@ export function CombinedReportTab({ projectId }: Props) {
           <p>No data yet for this project.</p>
           <p className="text-xs">Save QC results from the Quality Report tab, then upload back-check and listen-in files.</p>
         </div>
+      )}
+
+      {(quality as QualityRecord[]).length > 0 && (
+        <FilterBar
+          filters={filters} defs={filterDefs} onChange={setFilter} onClear={clearFilters}
+          activeCount={activeCount} totalRows={(quality as QualityRecord[]).length} filteredRows={filteredQ.length}
+          onCsvDownload={() => {}}
+        />
       )}
 
       {/* ── Top-level KPI summary ── */}

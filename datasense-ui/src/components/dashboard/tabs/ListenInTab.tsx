@@ -10,6 +10,7 @@ import {
   getListenInRecords, uploadListenIn, addManualListenIn, deleteListenIn, downloadTemplate,
   type ListenInRecord,
 } from '../../../api/dashboard'
+import { FilterBar, useFilters, exportCSV, exportExcel, type FilterDef } from '../utils/tabUtils'
 
 const C = {
   accent: '#00B5A3', critical: '#1B2A4A', warning: '#00B5A3', info: '#1B2A4A',
@@ -36,6 +37,7 @@ export function ListenInTab({ projectId, target = 0.10 }: Props) {
   const [waveLabel, setWaveLabel] = useState('')
   const [file, setFile] = useState<File | null>(null)
   const [activeInput, setActiveInput] = useState<'manual' | 'batch'>('manual')
+  const [isExporting, setIsExporting] = useState(false)
 
   // Manual form state
   const [form, setForm] = useState({
@@ -96,11 +98,26 @@ export function ListenInTab({ projectId, target = 0.10 }: Props) {
 
   const canUpload = authUser && UPLOAD_ROLES.has(authUser.role)
 
-  // KPIs
-  const total = records.length
-  const passed = records.filter((r: ListenInRecord) => r.result === 'Pass').length
-  const failed = records.filter((r: ListenInRecord) => r.result === 'Fail').length
-  const partial = records.filter((r: ListenInRecord) => r.result === 'Partial').length
+  const { filters, filtered, activeCount, setFilter, clearFilters, uniqueVals } = useFilters(
+    records as Record<string, unknown>[],
+    ['interviewer_id', 'region', 'result', 'listen_type'],
+    'listen_date',
+  )
+
+  const filterDefs: FilterDef[] = [
+    { key: 'interviewer_id', label: 'Interviewer', type: 'select', options: uniqueVals['interviewer_id'] ?? [] },
+    { key: 'region', label: 'Region', type: 'select', options: uniqueVals['region'] ?? [] },
+    { key: 'result', label: 'Result', type: 'select', options: uniqueVals['result'] ?? [] },
+    { key: 'listen_type', label: 'Type', type: 'select', options: uniqueVals['listen_type'] ?? [] },
+    { key: 'date_from', label: 'Date from', type: 'date' },
+    { key: 'date_to', label: 'Date to', type: 'date' },
+  ]
+
+  // KPIs on filtered set
+  const total = filtered.length
+  const passed = filtered.filter(r => (r as ListenInRecord).result === 'Pass').length
+  const failed = filtered.filter(r => (r as ListenInRecord).result === 'Fail').length
+  const partial = filtered.filter(r => (r as ListenInRecord).result === 'Partial').length
   const passRate = total > 0 ? Math.round(passed / total * 100) : 0
 
   // Pie data
@@ -113,14 +130,25 @@ export function ListenInTab({ projectId, target = 0.10 }: Props) {
 
   // Sessions by interviewer
   const byItv: Record<string, number> = {}
-  records.forEach((r: ListenInRecord) => {
-    const id = r.interviewer_id ?? 'Unknown'
+  filtered.forEach(r => {
+    const rec = r as ListenInRecord
+    const id = rec.interviewer_id ?? 'Unknown'
     byItv[id] = (byItv[id] ?? 0) + 1
   })
   const itvData = Object.entries(byItv)
     .map(([name, count]) => ({ name, count }))
     .sort((a, b) => b.count - a.count)
     .slice(0, 15)
+
+  const handleCsvDownload = () => exportCSV(filtered as Record<string, unknown>[], `listenin_${projectId}.csv`)
+  const handleExcelDownload = async () => {
+    setIsExporting(true)
+    try {
+      await exportExcel(projectId, 'listen_in', filtered as Record<string, unknown>[], {
+        type: 'bar', data: itvData, x: 'name', y: 'count', title: 'Sessions by Interviewer',
+      }, token, `listenin_report_${projectId}.xlsx`)
+    } finally { setIsExporting(false) }
+  }
 
   return (
     <div className="space-y-6">
@@ -275,6 +303,12 @@ export function ListenInTab({ projectId, target = 0.10 }: Props) {
 
       {records.length > 0 && (
         <>
+          <FilterBar
+            filters={filters} defs={filterDefs} onChange={setFilter} onClear={clearFilters}
+            activeCount={activeCount} totalRows={records.length} filteredRows={filtered.length}
+            onCsvDownload={handleCsvDownload} onExcelDownload={handleExcelDownload} isExporting={isExporting}
+          />
+
           {/* KPIs */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <div className="card p-4">
@@ -330,7 +364,7 @@ export function ListenInTab({ projectId, target = 0.10 }: Props) {
 
           {/* Sessions table */}
           <div className="card p-4">
-            <p className="label mb-2">Sessions</p>
+            <p className="label mb-2">Sessions ({filtered.length})</p>
             <div className="overflow-x-auto max-h-80">
               <table className="w-full text-xs">
                 <thead className="sticky top-0 bg-surface">
@@ -341,7 +375,7 @@ export function ListenInTab({ projectId, target = 0.10 }: Props) {
                   </tr>
                 </thead>
                 <tbody>
-                  {records.map((r: ListenInRecord) => (
+                  {(filtered as ListenInRecord[]).map(r => (
                     <tr key={r.id} className="border-b border-line/30 hover:bg-surface2/50">
                       <td className="py-1 pr-3 text-tx">{r.interviewer_id ?? '—'}</td>
                       <td className="py-1 pr-3 text-muted">{r.listen_date ?? '—'}</td>
@@ -351,7 +385,7 @@ export function ListenInTab({ projectId, target = 0.10 }: Props) {
                           ? <span className="text-accent">Pass</span>
                           : r.result === 'Fail'
                           ? <span className="text-critical">Fail</span>
-                          : <span className="text-warning">{r.result}</span>}
+                          : <span className="text-muted">{r.result}</span>}
                       </td>
                       <td className="py-1 pr-3 text-muted">{r.region ?? '—'}</td>
                       <td className="py-1 pr-3 text-muted max-w-[120px] truncate">{r.issues_noted ?? '—'}</td>

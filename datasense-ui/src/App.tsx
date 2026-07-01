@@ -25,7 +25,7 @@ import { Dashboard } from './components/dashboard/Dashboard'
 import { useAppStore, IS_DASHBOARD_DOMAIN } from './store/appStore'
 
 const qc = new QueryClient({
-  defaultOptions: { queries: { retry: 1, refetchOnWindowFocus: false } },
+  defaultOptions: { queries: { retry: 1, refetchOnWindowFocus: false, staleTime: 60_000 } },
 })
 
 const ACCENT_VARS: Record<string, [string, string]> = {

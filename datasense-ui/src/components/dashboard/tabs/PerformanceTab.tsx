@@ -1,16 +1,19 @@
 import React, { useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer } from 'recharts'
+import {
+  BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer, Legend,
+} from 'recharts'
 import { Upload, Loader2, Trash2, Download } from 'lucide-react'
 import { useAppStore } from '../../../store/appStore'
 import {
   getPerformanceRecords, getUploadLog, uploadPerformance, deleteUpload, downloadTemplate,
   type PerformanceRecord, type UploadLogEntry,
 } from '../../../api/dashboard'
+import { FilterBar, useFilters, exportCSV, exportExcel, type FilterDef } from '../utils/tabUtils'
 
 const C = {
-  accent: '#00B5A3', muted: '#6B7280', surface: '#FFFFFF', surface2: '#F1F4F8',
-  line: '#E2E6ED', tx: '#1B2A4A', info: '#1B2A4A',
+  accent: '#00B5A3', critical: '#1B2A4A', muted: '#6B7280',
+  surface: '#FFFFFF', surface2: '#F1F4F8', line: '#E2E6ED', tx: '#1B2A4A',
 }
 const TooltipStyle = {
   contentStyle: { backgroundColor: C.surface2, border: `1px solid ${C.line}`, borderRadius: 6, color: C.tx },
@@ -27,6 +30,7 @@ export function PerformanceTab({ projectId }: Props) {
   const fileRef = useRef<HTMLInputElement>(null)
   const [waveLabel, setWaveLabel] = useState('')
   const [file, setFile] = useState<File | null>(null)
+  const [isExporting, setIsExporting] = useState(false)
 
   const { data: records = [], isLoading } = useQuery({
     queryKey: ['dash-performance', projectId],
@@ -51,7 +55,6 @@ export function PerformanceTab({ projectId }: Props) {
       qc.invalidateQueries({ queryKey: ['dash-summary'] })
     },
   })
-
   const delMut = useMutation({
     mutationFn: (uid: string) => deleteUpload(uid, 'performance', token),
     onSuccess: () => {
@@ -63,18 +66,45 @@ export function PerformanceTab({ projectId }: Props) {
   const canUpload = authUser && UPLOAD_ROLES.has(authUser.role)
   const perfLogs = uploadLog.filter((u: UploadLogEntry) => u.report_type === 'performance')
 
-  const totalCompletes = records.reduce((s: number, r: PerformanceRecord) => s + (r.interview_completes ?? 0), 0)
-  const totalAcc = records.reduce((s: number, r: PerformanceRecord) => s + (r.accompaniments ?? 0), 0)
-  const totalBC = records.reduce((s: number, r: PerformanceRecord) => s + (r.backcheck_completed ?? 0), 0)
+  const { filters, filtered, activeCount, setFilter, clearFilters, uniqueVals } = useFilters(
+    records as Record<string, unknown>[],
+    ['interviewer_id', 'region'],
+  )
 
-  const chartData = records
-    .filter((r: PerformanceRecord) => r.interviewer_id)
-    .slice(0, 20)
-    .map((r: PerformanceRecord) => ({
+  const filterDefs: FilterDef[] = [
+    { key: 'interviewer_id', label: 'Interviewer', type: 'select', options: uniqueVals['interviewer_id'] ?? [] },
+    { key: 'region', label: 'Region', type: 'select', options: uniqueVals['region'] ?? [] },
+  ]
+
+  const totalCompletes = filtered.reduce((s, r) => s + ((r as PerformanceRecord).interview_completes ?? 0), 0)
+  const totalAcc = filtered.reduce((s, r) => s + ((r as PerformanceRecord).accompaniments ?? 0), 0)
+  const totalBC = filtered.reduce((s, r) => s + ((r as PerformanceRecord).backcheck_completed ?? 0), 0)
+  const totalCancelled = filtered.reduce((s, r) => s + ((r as PerformanceRecord).cancelled_interviews ?? 0), 0)
+
+  // Stacked chart: all interviewers, Completes vs Flags (cancelled)
+  const chartData = (filtered as PerformanceRecord[])
+    .filter(r => r.interviewer_id)
+    .sort((a, b) => ((b.interview_completes ?? 0) + (b.cancelled_interviews ?? 0)) -
+      ((a.interview_completes ?? 0) + (a.cancelled_interviews ?? 0)))
+    .map(r => ({
       name: r.interviewer_id,
       Completes: r.interview_completes ?? 0,
+      Flags: (r.cancelled_interviews ?? 0) + (r.backcheck_completed ?? 0),
       Accompaniments: r.accompaniments ?? 0,
     }))
+
+  const chartH = Math.max(220, chartData.length * 28)
+
+  const handleCsvDownload = () => exportCSV(filtered as Record<string, unknown>[], `performance_${projectId}.csv`)
+  const handleExcelDownload = async () => {
+    setIsExporting(true)
+    try {
+      await exportExcel(projectId, 'performance', filtered as Record<string, unknown>[], {
+        type: 'bar_stacked', data: chartData, title: 'Performance by Interviewer',
+        series: ['Completes', 'Flags', 'Accompaniments'],
+      }, token, `performance_report_${projectId}.xlsx`)
+    } finally { setIsExporting(false) }
+  }
 
   return (
     <div className="space-y-6">
@@ -129,18 +159,24 @@ export function PerformanceTab({ projectId }: Props) {
       )}
 
       {isLoading && <div className="flex items-center gap-2 text-muted text-sm"><Loader2 size={14} className="animate-spin" /> Loading…</div>}
-
       {!isLoading && records.length === 0 && (
         <div className="card p-8 text-center text-muted text-sm">No performance records yet. Upload a performance Excel file.</div>
       )}
 
       {records.length > 0 && (
         <>
-          <div className="grid grid-cols-3 gap-3">
+          <FilterBar
+            filters={filters} defs={filterDefs} onChange={setFilter} onClear={clearFilters}
+            activeCount={activeCount} totalRows={records.length} filteredRows={filtered.length}
+            onCsvDownload={handleCsvDownload} onExcelDownload={handleExcelDownload} isExporting={isExporting}
+          />
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             {[
               { label: 'Total Completes', value: totalCompletes, color: 'text-accent' },
-              { label: 'Accompaniments', value: totalAcc, color: 'text-info' },
-              { label: 'Backchecks Done', value: totalBC, color: 'text-warning' },
+              { label: 'Accompaniments', value: totalAcc, color: 'text-tx' },
+              { label: 'Backchecks Done', value: totalBC, color: 'text-tx' },
+              { label: 'Cancelled / Flagged', value: totalCancelled, color: 'text-critical' },
             ].map(k => (
               <div key={k.label} className="card p-4">
                 <p className="label mb-1">{k.label}</p>
@@ -151,39 +187,46 @@ export function PerformanceTab({ projectId }: Props) {
 
           {chartData.length > 0 && (
             <div className="card p-4">
-              <p className="label mb-3">Completes by Interviewer (top 20)</p>
-              <ResponsiveContainer width="100%" height={260}>
-                <BarChart data={chartData} margin={{ left: -20 }} layout="vertical">
-                  <CartesianGrid strokeDasharray="3 3" stroke={C.line} horizontal={false} />
-                  <XAxis type="number" tick={{ fill: C.muted, fontSize: 10 }} />
-                  <YAxis type="category" dataKey="name" width={70} tick={{ fill: C.muted, fontSize: 9 }} />
-                  <Tooltip {...TooltipStyle} />
-                  <Bar dataKey="Completes" fill={C.accent} radius={[0, 2, 2, 0]} />
-                  <Bar dataKey="Accompaniments" fill={C.info} radius={[0, 2, 2, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
+              <p className="label mb-3">Completes vs Flags — all interviewers</p>
+              <div style={{ height: chartH }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={chartData} layout="vertical" margin={{ left: -10, right: 10 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke={C.line} horizontal={false} />
+                    <XAxis type="number" tick={{ fill: C.muted, fontSize: 10 }} />
+                    <YAxis type="category" dataKey="name" width={72} tick={{ fill: C.muted, fontSize: 9 }} />
+                    <Tooltip {...TooltipStyle} />
+                    <Legend wrapperStyle={{ fontSize: 11 }} />
+                    <Bar dataKey="Completes" stackId="a" fill={C.accent} radius={[0, 0, 0, 0]} />
+                    <Bar dataKey="Accompaniments" stackId="a" fill="#3B5A9A" radius={[0, 0, 0, 0]} />
+                    <Bar dataKey="Flags" stackId="a" fill={C.critical} radius={[0, 2, 2, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
             </div>
           )}
 
           <div className="card p-4">
-            <p className="label mb-2">Records (first 200)</p>
+            <p className="label mb-2">Records ({filtered.length})</p>
             <div className="overflow-x-auto max-h-80">
               <table className="w-full text-xs">
                 <thead className="sticky top-0 bg-surface">
                   <tr className="border-b border-line text-muted">
-                    {['Interviewer', 'Region', 'Completes', 'Accompaniments', 'BC Done', 'First', 'Last'].map(h => (
+                    {['Interviewer', 'Region', 'Completes', 'Accompaniments', 'BC Done', 'Cancelled', 'First', 'Last'].map(h => (
                       <th key={h} className="text-left py-1 pr-3 whitespace-nowrap">{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {records.slice(0, 200).map((r: PerformanceRecord) => (
+                  {(filtered as PerformanceRecord[]).map(r => (
                     <tr key={r.id} className="border-b border-line/30 hover:bg-surface2/50">
                       <td className="py-1 pr-3 font-mono text-tx">{r.interviewer_id ?? '—'}</td>
                       <td className="py-1 pr-3 text-muted">{r.region ?? '—'}</td>
-                      <td className="py-1 pr-3 text-accent">{r.interview_completes}</td>
+                      <td className="py-1 pr-3 text-accent font-medium">{r.interview_completes}</td>
                       <td className="py-1 pr-3 text-muted">{r.accompaniments}</td>
                       <td className="py-1 pr-3 text-muted">{r.backcheck_completed}</td>
+                      <td className={`py-1 pr-3 ${(r.cancelled_interviews ?? 0) > 0 ? 'text-critical font-medium' : 'text-muted'}`}>
+                        {r.cancelled_interviews ?? 0}
+                      </td>
                       <td className="py-1 pr-3 text-muted">{r.first_interview ?? '—'}</td>
                       <td className="py-1 pr-3 text-muted">{r.last_interview ?? '—'}</td>
                     </tr>

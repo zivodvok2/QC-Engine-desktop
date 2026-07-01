@@ -3,11 +3,23 @@ Dashboard API router — serves the React dashboard UI.
 Mirrors the Streamlit dashboard/pages_modules logic via the shared SQLite DB.
 """
 import io
-from typing import Optional
+import random
+import uuid
+from datetime import date, timedelta
+from typing import Any, Dict, List, Optional
 
 import bcrypt
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
+import numpy as np
 import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from fastapi.responses import StreamingResponse
+from openpyxl import Workbook
+from openpyxl.drawing.image import Image as XLImage
+from openpyxl.styles import Alignment, Font, PatternFill, Border, Side
 from pydantic import BaseModel
 
 import shared_db
@@ -1085,3 +1097,200 @@ def export_interviewer_report(
 def get_interviewer_metrics(interviewer_code: str, user: dict = Depends(get_current_user)):
     _require_db()
     return shared_db.get_interviewer_metrics(interviewer_code)
+
+
+# ── Timing mock-data seed ──────────────────────────────────────────────────────
+
+@router.post("/projects/{project_id}/seed-timing")
+def seed_timing(project_id: int, user: dict = Depends(get_current_user)):
+    """Generate realistic mock timing records for a project using DB interviewers."""
+    _require_db()
+    interviewers = shared_db.get_all_interviewers()
+    if not interviewers:
+        raise HTTPException(404, "No interviewers in DB to seed from")
+
+    rng = random.Random(project_id)
+    conn = shared_db.get_conn()
+    try:
+        start = date(2025, 2, 1)
+        records_inserted = 0
+        upload_id = str(uuid.uuid4())
+
+        conn.execute(
+            """INSERT INTO upload_log (project_id, upload_id, uploaded_by, filename, report_type, row_count, wave_label)
+               VALUES (%s, %s, %s, %s, %s, %s, %s)""",
+            (project_id, upload_id, user["id"], "demo_timing.xlsx", "timing", 0, "Demo Wave"),
+        )
+
+        for itv in interviewers:
+            code = itv["interviewer_code"]
+            region = itv.get("region") or "Nairobi"
+            n = rng.randint(18, 45)
+            base_loi = rng.uniform(12, 28)
+            for i in range(n):
+                day_offset = rng.randint(0, 89)
+                interview_date = (start + timedelta(days=day_offset)).isoformat()
+                duration = max(3.0, rng.gauss(base_loi, base_loi * 0.18))
+                instance_id = f"DEMO-{code}-{i+1:03d}"
+                conn.execute(
+                    """INSERT INTO timing_records
+                       (project_id, upload_id, instance_id, interviewer_id, region, interview_date, duration_minutes)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s)""",
+                    (project_id, upload_id, instance_id, code, region,
+                     interview_date, round(duration, 1)),
+                )
+                records_inserted += 1
+
+        conn.execute(
+            "UPDATE upload_log SET row_count = %s WHERE upload_id = %s",
+            (records_inserted, upload_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    return {"inserted": records_inserted}
+
+
+# ── Generic filtered Excel export ─────────────────────────────────────────────
+
+NAVY   = "1B2A4A"
+TEAL   = "00B5A3"
+WHITE  = "FFFFFF"
+LIGHT  = "F1F4F8"
+
+def _hdr_fill(hex_col: str) -> PatternFill:
+    return PatternFill("solid", fgColor=hex_col)
+
+def _thin_border() -> Border:
+    s = Side(style="thin", color="D0D5DD")
+    return Border(left=s, right=s, top=s, bottom=s)
+
+def _make_chart_image(chart_spec: dict) -> io.BytesIO | None:
+    try:
+        ctype = chart_spec.get("type", "bar")
+        data  = chart_spec.get("data", [])
+        title = chart_spec.get("title", "")
+        if not data:
+            return None
+
+        fig, ax = plt.subplots(figsize=(8, max(3, len(data) * 0.35 + 1)))
+        fig.patch.set_facecolor("#F1F4F8")
+        ax.set_facecolor("#F1F4F8")
+        ax.spines[["top", "right"]].set_visible(False)
+        ax.tick_params(colors="#6B7280", labelsize=8)
+        for spine in ax.spines.values():
+            spine.set_color("#E2E6ED")
+
+        if ctype in ("bar", "bar_horizontal"):
+            labels = [str(r.get(chart_spec.get("y", "name"), "")) for r in data]
+            values = [float(r.get(chart_spec.get("x", "count"), 0)) for r in data]
+            if ctype == "bar_horizontal":
+                ax.barh(labels, values, color="#1B2A4A", height=0.6)
+                ax.set_xlabel(chart_spec.get("x", "count"), color="#6B7280", fontsize=9)
+                ax.invert_yaxis()
+            else:
+                ax.bar(labels, values, color="#00B5A3", width=0.6)
+                ax.set_ylabel(chart_spec.get("y", "count"), color="#6B7280", fontsize=9)
+                plt.xticks(rotation=35, ha="right", fontsize=8)
+
+        elif ctype == "bar_stacked":
+            series = chart_spec.get("series", [])
+            labels = [str(r.get("name", "")) for r in data]
+            colors = ["#00B5A3", "#3B5A9A", "#1B2A4A", "#6B7280"]
+            bottom = np.zeros(len(data))
+            for idx, s in enumerate(series):
+                vals = np.array([float(r.get(s, 0)) for r in data])
+                ax.barh(labels, vals, left=bottom, color=colors[idx % len(colors)],
+                        height=0.6, label=s)
+                bottom += vals
+            ax.invert_yaxis()
+            ax.legend(fontsize=8, loc="lower right")
+
+        ax.set_title(title, color="#1B2A4A", fontsize=11, fontweight="bold", pad=8)
+        plt.tight_layout()
+        buf = io.BytesIO()
+        plt.savefig(buf, format="png", dpi=130, bbox_inches="tight")
+        plt.close(fig)
+        buf.seek(0)
+        return buf
+    except Exception:
+        return None
+
+
+class ExportRequest(BaseModel):
+    report_type: str
+    rows: List[Dict[str, Any]]
+    chart_spec: Dict[str, Any] = {}
+
+
+@router.post("/projects/{project_id}/export")
+def export_tab_excel(project_id: int, body: ExportRequest, user: dict = Depends(get_current_user)):
+    _require_db()
+    rows = body.rows
+    chart_spec = body.chart_spec
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = body.report_type.replace("_", " ").title()
+
+    hdr_font  = Font(bold=True, color=WHITE, name="Calibri", size=10)
+    hdr_fill  = _hdr_fill(NAVY)
+    data_fill = _hdr_fill(LIGHT)
+    border    = _thin_border()
+
+    if rows:
+        cols = list(rows[0].keys())
+        for ci, col in enumerate(cols, 1):
+            cell = ws.cell(row=1, column=ci, value=col.replace("_", " ").title())
+            cell.font = hdr_font
+            cell.fill = hdr_fill
+            cell.border = border
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+            ws.column_dimensions[cell.column_letter].width = max(12, len(col) + 4)
+
+        for ri, row in enumerate(rows, 2):
+            for ci, col in enumerate(cols, 1):
+                cell = ws.cell(row=ri, column=ci, value=row.get(col))
+                cell.border = border
+                cell.alignment = Alignment(vertical="center")
+                if ri % 2 == 0:
+                    cell.fill = data_fill
+        ws.row_dimensions[1].height = 20
+        ws.freeze_panes = "A2"
+
+    # Chart sheet
+    chart_img = _make_chart_image(chart_spec)
+    if chart_img:
+        wc = wb.create_sheet("Chart")
+        wc.sheet_view.showGridLines = False
+        img = XLImage(chart_img)
+        img.anchor = "B2"
+        wc.add_image(img)
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    from datetime import datetime as _dt
+    fname = f"{body.report_type}_report_{project_id}_{_dt.now().strftime('%Y%m%d_%H%M')}.xlsx"
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
+@router.get("/projects/{project_id}/ppt")
+async def download_project_ppt(
+    project_id: int,
+    current_user=Depends(get_current_user),
+):
+    from ppt_generator import build_project_ppt
+    pptx_bytes = build_project_ppt(project_id)
+    buf = io.BytesIO(pptx_bytes)
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        headers={"Content-Disposition": f'attachment; filename="QC_Report_Project_{project_id}.pptx"'},
+    )
