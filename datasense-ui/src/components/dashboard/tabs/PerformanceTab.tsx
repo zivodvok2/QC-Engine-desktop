@@ -31,6 +31,7 @@ export function PerformanceTab({ projectId }: Props) {
   const [waveLabel, setWaveLabel] = useState('')
   const [file, setFile] = useState<File | null>(null)
   const [isExporting, setIsExporting] = useState(false)
+  const activeBarRef = useRef<string | null>(null)
 
   const { data: records = [], isLoading } = useQuery({
     queryKey: ['dash-performance', projectId],
@@ -194,11 +195,30 @@ export function PerformanceTab({ projectId }: Props) {
                     <CartesianGrid strokeDasharray="3 3" stroke={C.line} horizontal={false} />
                     <XAxis type="number" tick={{ fill: C.muted, fontSize: 10 }} />
                     <YAxis type="category" dataKey="name" width={72} tick={{ fill: C.muted, fontSize: 9 }} />
-                    <Tooltip {...TooltipStyle} />
-                    <Legend wrapperStyle={{ fontSize: 11 }} />
-                    <Bar dataKey="Completes" stackId="a" fill={C.accent} radius={[0, 0, 0, 0]} />
-                    <Bar dataKey="Accompaniments" stackId="a" fill="#3B5A9A" radius={[0, 0, 0, 0]} />
-                    <Bar dataKey="Flags" stackId="a" fill={C.critical} radius={[0, 2, 2, 0]} />
+                    <Tooltip
+                      cursor={false}
+                      content={({ active, payload, label }) => {
+                        if (!active || !payload?.length) return null
+                        const key = activeBarRef.current
+                        const item = key ? payload.find((p: any) => p.dataKey === key) : payload[0]
+                        if (!item) return null
+                        return (
+                          <div style={TooltipStyle.contentStyle}>
+                            <p style={{ ...TooltipStyle.labelStyle, fontSize: 10, marginBottom: 2 }}>{label}</p>
+                            <p style={{ color: item.fill ?? item.color, fontSize: 12, fontWeight: 600 }}>
+                              {item.name}: {item.value}
+                            </p>
+                          </div>
+                        )
+                      }}
+                    />
+                    <Legend verticalAlign="top" wrapperStyle={{ fontSize: 11, paddingBottom: 8 }} />
+                    <Bar dataKey="Completes" stackId="a" fill={C.accent} radius={[0, 0, 0, 0]}
+                      onMouseEnter={() => { activeBarRef.current = 'Completes' }} />
+                    <Bar dataKey="Accompaniments" stackId="a" fill="#3B5A9A" radius={[0, 0, 0, 0]}
+                      onMouseEnter={() => { activeBarRef.current = 'Accompaniments' }} />
+                    <Bar dataKey="Flags" stackId="a" fill="#EF4444" radius={[0, 2, 2, 0]}
+                      onMouseEnter={() => { activeBarRef.current = 'Flags' }} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>

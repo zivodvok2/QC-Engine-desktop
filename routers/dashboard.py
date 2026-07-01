@@ -848,6 +848,14 @@ def delete_supervisor(supervisor_id: int, user: dict = Depends(get_current_user)
     return {"status": "ok"}
 
 
+@router.post("/supervisors/dedup")
+def dedup_supervisors_endpoint(user: dict = Depends(get_current_user)):
+    """Merge duplicate supervisor names (case-insensitive)."""
+    _require_db()
+    _require_admin(user)
+    return shared_db.dedup_supervisors()
+
+
 # ── Interviewers registry ──────────────────────────────────────────────────────
 
 @router.get("/interviewers")

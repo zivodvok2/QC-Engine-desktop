@@ -666,6 +666,11 @@ export async function escalateInterviewer(code: string, message: string | undefi
   return data
 }
 
+export async function dedupSupervisors(token: string): Promise<{ groups_merged: number; supervisors_removed: number }> {
+  const { data } = await client.post('/api/dashboard/supervisors/dedup', {}, { headers: authHeader(token) })
+  return data
+}
+
 export async function getInterviewerActions(code: string, token: string): Promise<InterviewerAction[]> {
   const { data } = await client.get<InterviewerAction[]>(`/api/dashboard/interviewers/${encodeURIComponent(code)}/actions`, { headers: authHeader(token) })
   return data

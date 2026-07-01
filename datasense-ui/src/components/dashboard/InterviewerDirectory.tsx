@@ -13,7 +13,7 @@ import { useAppStore } from '../../store/appStore'
 import {
   getSupervisors, getInterviewers, getInterviewerMetrics,
   getInterviewerAnalytics, downloadInterviewerReport,
-  createSupervisor, deleteSupervisor, upsertInterviewer,
+  createSupervisor, deleteSupervisor, upsertInterviewer, dedupSupervisors,
   blockInterviewer, unblockInterviewer, warnInterviewer, escalateInterviewer,
   getInterviewerActions,
   type Supervisor, type Interviewer, type InterviewerMetrics, type ItvAnalyticsRow,
@@ -429,13 +429,18 @@ export function InterviewerDirectory() {
   const [filterSupervisor, setFilterSupervisor] = useState<number | undefined>()
   const [filterRegion, setFilterRegion] = useState<string>('')
   const [filterInterviewer, setFilterInterviewer] = useState<string>('')
+  const [preset, setPreset] = useState<'all' | 'high' | 'medium' | 'issues' | 'blocked'>('all')
+  const [sortCol, setSortCol] = useState<string>('flag_rate')
+  const [sortDir, setSortDir] = useState<'desc' | 'asc'>('desc')
   const [registryOpen, setRegistryOpen] = useState(false)
   const [selectedCode, setSelectedCode] = useState<string | null>(null)
   const [managingCode, setManagingCode] = useState<string | null>(null)
   const [showAddItv, setShowAddItv] = useState(false)
   const [showAddSup, setShowAddSup] = useState(false)
   const [downloading, setDownloading] = useState(false)
+  const [dedupMsg, setDedupMsg] = useState<string | null>(null)
 
+  // Filtered analytics (used for main display)
   const { data: analytics, isLoading, isFetching } = useQuery({
     queryKey: ['itv-analytics', filterProject, filterSupervisor, filterRegion],
     queryFn: () => getInterviewerAnalytics(token, {
@@ -445,6 +450,28 @@ export function InterviewerDirectory() {
     }),
     enabled: !!token,
     placeholderData: keepPreviousData,
+  })
+
+  // Unfiltered analytics — powers dropdowns so options never disappear when filtering
+  const { data: allAnalytics } = useQuery({
+    queryKey: ['itv-analytics-all'],
+    queryFn: () => getInterviewerAnalytics(token, {}),
+    enabled: !!token,
+    staleTime: 60_000,
+  })
+
+  // Always-loaded interviewers list for accurate supervisor counts
+  const { data: interviewers = [] } = useQuery({
+    queryKey: ['dash-interviewers'],
+    queryFn: () => getInterviewers(token),
+    enabled: !!token,
+  })
+
+  // Single-interviewer detail (only when one is selected from filter)
+  const { data: singleMetrics, isLoading: singleLoading } = useQuery({
+    queryKey: ['itv-metrics', filterInterviewer],
+    queryFn: () => getInterviewerMetrics(filterInterviewer, token),
+    enabled: !!token && !!filterInterviewer,
   })
 
   const handleDownload = async () => {
@@ -466,21 +493,32 @@ export function InterviewerDirectory() {
     enabled: !!token,
   })
 
-  const { data: interviewers = [] } = useQuery({
-    queryKey: ['dash-interviewers'],
-    queryFn: () => getInterviewers(token),
-    enabled: !!token && registryOpen,
-  })
-
   const delSupMut = useMutation({
     mutationFn: (id: number) => deleteSupervisor(id, token),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['dash-supervisors'] }); qc.invalidateQueries({ queryKey: ['itv-analytics'] }) },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['dash-supervisors'] }); qc.invalidateQueries({ queryKey: ['itv-analytics'] }); qc.invalidateQueries({ queryKey: ['itv-analytics-all'] }) },
+  })
+
+  const dedupMut = useMutation({
+    mutationFn: () => dedupSupervisors(token),
+    onSuccess: (result) => {
+      setDedupMsg(`Cleaned up ${result.supervisors_removed} duplicate supervisor(s) across ${result.groups_merged} name(s).`)
+      qc.invalidateQueries({ queryKey: ['dash-supervisors'] })
+      qc.invalidateQueries({ queryKey: ['itv-analytics'] })
+      qc.invalidateQueries({ queryKey: ['itv-analytics-all'] })
+      qc.invalidateQueries({ queryKey: ['dash-interviewers'] })
+    },
   })
 
   const rows = analytics?.interviewers ?? []
   const bySup = analytics?.by_supervisor ?? []
   const projects = analytics?.projects ?? []
-  const regions = [...new Set(rows.map(r => r.region).filter(Boolean))] as string[]
+
+  // Dropdown options always from unfiltered data so they never disappear
+  const allRows = allAnalytics?.interviewers ?? []
+  const regions = [...new Set(allRows.map(r => r.region).filter(Boolean))].sort() as string[]
+  const allInterviewerOptions = [...allRows].sort((a, b) =>
+    (a.name ?? a.code).localeCompare(b.name ?? b.code)
+  )
 
   // KPIs
   const totalActive = rows.filter(r => r.is_active).length
@@ -488,8 +526,12 @@ export function InterviewerDirectory() {
   const avgFlagRate = withData.length ? Math.round(withData.reduce((s, r) => s + r.flag_rate, 0) / withData.length * 10) / 10 : 0
   const highRisk = rows.filter(r => r.flag_rate >= 15).length
   const totalBcErrors = rows.reduce((s, r) => s + r.bc_errors, 0)
+  const blocked = rows.filter(r => r.is_blocked).length
 
-  // Chart data — top 10 by flag rate (only those with interviews)
+  // "Needs Attention" — high risk with no action in last 30 days (simple heuristic: high risk & active)
+  const needsAttention = rows.filter(r => r.flag_rate >= 15 && r.is_active && !r.is_blocked && r.total_interviews > 0)
+
+  // Chart data — top 10 by flag rate
   const top10 = rows.filter(r => r.total_interviews > 0).slice(0, 10)
   const topFlagged = [...top10].sort((a, b) => b.flag_rate - a.flag_rate).map(r => ({
     label: r.name ? r.name.split(' ')[0] : r.code,
@@ -511,11 +553,41 @@ export function InterviewerDirectory() {
       cancelled: r.cancelled,
     }))
 
-  const hasFilters = filterProject || filterSupervisor || filterRegion || filterInterviewer
-  // Client-side interviewer filter applied to table only (charts always show full picture)
-  const tableRows = filterInterviewer
-    ? rows.filter(r => r.code === filterInterviewer)
-    : rows
+  const hasFilters = !!(filterProject || filterSupervisor || filterRegion || filterInterviewer || preset !== 'all')
+
+  // Preset filter
+  const presetFilter = (r: ItvAnalyticsRow) => {
+    if (preset === 'high') return r.flag_rate >= 15
+    if (preset === 'medium') return r.flag_rate >= 8 && r.flag_rate < 15
+    if (preset === 'issues') return r.duration_flags > 0 || r.sl_flags > 0 || r.bc_errors > 0 || r.li_fail > 0
+    if (preset === 'blocked') return !!r.is_blocked
+    return true
+  }
+
+  // Sort helper
+  const sortFn = (a: ItvAnalyticsRow, b: ItvAnalyticsRow) => {
+    const numCols = ['total_interviews','flag_rate','duration_flags','sl_flags','bc_errors','li_fail','cancelled','avg_duration']
+    const av = numCols.includes(sortCol) ? (Number((a as any)[sortCol]) || 0) : String((a as any)[sortCol] ?? '')
+    const bv = numCols.includes(sortCol) ? (Number((b as any)[sortCol]) || 0) : String((b as any)[sortCol] ?? '')
+    const cmp = typeof av === 'number' ? av - (bv as number) : (av as string).localeCompare(bv as string)
+    return sortDir === 'desc' ? -cmp : cmp
+  }
+
+  const tableRows = [...rows]
+    .filter(r => !filterInterviewer || r.code === filterInterviewer)
+    .filter(presetFilter)
+    .sort(sortFn)
+
+  const toggleSort = (col: string) => {
+    if (sortCol === col) setSortDir(d => d === 'desc' ? 'asc' : 'desc')
+    else { setSortCol(col); setSortDir('desc') }
+  }
+
+  const SortArrow = ({ col }: { col: string }) => (
+    <span className="ml-0.5 text-[9px]">
+      {sortCol === col ? (sortDir === 'desc' ? '↓' : '↑') : <span className="opacity-30">↕</span>}
+    </span>
+  )
 
   return (
     <div className="space-y-5">
@@ -539,6 +611,15 @@ export function InterviewerDirectory() {
           </button>
           {isAdmin && (
             <>
+              <button
+                onClick={() => dedupMut.mutate()}
+                disabled={dedupMut.isPending}
+                className="btn-ghost flex items-center gap-1.5 text-xs text-muted"
+                title="Remove duplicate supervisors"
+              >
+                {dedupMut.isPending ? <Loader2 size={12} className="animate-spin" /> : <ShieldAlert size={12} />}
+                Dedup
+              </button>
               <button onClick={() => { setShowAddSup(s => !s); setShowAddItv(false) }} className="btn-ghost flex items-center gap-1.5 text-xs">
                 <Plus size={12} /> Supervisor
               </button>
@@ -573,19 +654,85 @@ export function InterviewerDirectory() {
         <select value={filterInterviewer} onChange={e => setFilterInterviewer(e.target.value)}
           className="bg-surface2 border border-line rounded-lg px-3 py-1.5 text-sm text-tx">
           <option value="">All interviewers</option>
-          {rows.map(r => (
+          {allInterviewerOptions.map(r => (
             <option key={r.code} value={r.code}>
               {r.name ? `${r.code} — ${r.name}` : r.code}
             </option>
           ))}
         </select>
         {hasFilters && (
-          <button onClick={() => { setFilterProject(undefined); setFilterSupervisor(undefined); setFilterRegion(''); setFilterInterviewer('') }}
+          <button onClick={() => { setFilterProject(undefined); setFilterSupervisor(undefined); setFilterRegion(''); setFilterInterviewer(''); setPreset('all') }}
             className="text-xs text-muted hover:text-tx transition-colors">
             Clear all
           </button>
         )}
       </div>
+
+      {/* Preset quick-filter buttons */}
+      <div className="flex flex-wrap gap-2 items-center">
+        {([
+          { key: 'all', label: 'All' },
+          { key: 'high', label: 'High Risk', color: C.red },
+          { key: 'medium', label: 'Medium Risk', color: C.orange },
+          { key: 'issues', label: 'Has Issues', color: C.orange },
+          { key: 'blocked', label: 'Blocked', color: C.muted },
+        ] as { key: typeof preset; label: string; color?: string }[]).map(p => (
+          <button
+            key={p.key}
+            onClick={() => setPreset(p.key)}
+            className="px-3 py-1 rounded-full text-xs font-medium border transition-all"
+            style={preset === p.key
+              ? { backgroundColor: p.color ?? C.accent, color: '#fff', borderColor: p.color ?? C.accent }
+              : { backgroundColor: 'transparent', color: p.color ?? C.muted, borderColor: `${p.color ?? C.muted}40` }
+            }
+          >
+            {p.label}
+            {p.key === 'high' && highRisk > 0 && (
+              <span className="ml-1.5 bg-white/30 rounded-full px-1.5 py-0.5 text-[9px] font-bold">{highRisk}</span>
+            )}
+            {p.key === 'blocked' && blocked > 0 && (
+              <span className="ml-1.5 bg-white/30 rounded-full px-1.5 py-0.5 text-[9px] font-bold">{blocked}</span>
+            )}
+          </button>
+        ))}
+      </div>
+
+      {/* Needs Attention alert strip */}
+      {needsAttention.length > 0 && preset === 'all' && !filterInterviewer && (
+        <div className="rounded-lg border p-3 flex flex-col gap-2" style={{ borderColor: `${C.red}40`, backgroundColor: `${C.red}08` }}>
+          <div className="flex items-center gap-2">
+            <AlertTriangle size={13} style={{ color: C.red }} />
+            <span className="text-xs font-bold" style={{ color: C.red }}>
+              {needsAttention.length} interviewer{needsAttention.length > 1 ? 's' : ''} need attention
+            </span>
+            <span className="text-xs text-muted">— high risk, active, not yet actioned</span>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {needsAttention.slice(0, 8).map(r => (
+              <button
+                key={r.code}
+                onClick={() => setManagingCode(r.code)}
+                className="flex items-center gap-1.5 px-2 py-1 rounded border text-xs"
+                style={{ borderColor: `${C.red}40`, backgroundColor: `${C.red}10`, color: C.red }}
+              >
+                <span className="font-mono font-semibold">{r.code}</span>
+                <span className="text-[10px]">{r.flag_rate}%</span>
+              </button>
+            ))}
+            {needsAttention.length > 8 && (
+              <span className="text-xs text-muted self-center">+{needsAttention.length - 8} more</span>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Dedup result message */}
+      {dedupMsg && (
+        <div className="text-xs text-accent bg-accent/10 border border-accent/30 rounded-lg px-3 py-2 flex items-center justify-between">
+          <span>{dedupMsg}</span>
+          <button onClick={() => setDedupMsg(null)} className="ml-4 text-muted hover:text-tx"><X size={12} /></button>
+        </div>
+      )}
 
       {isLoading ? (
         <div className="flex items-center gap-2 text-muted text-sm py-8">
@@ -611,7 +758,94 @@ export function InterviewerDirectory() {
             ))}
           </div>
 
-          {rows.filter(r => r.total_interviews > 0).length === 0 ? (
+          {/* Single-interviewer expanded profile (Issue 1) */}
+          {filterInterviewer ? (
+            <div className="space-y-4">
+              {singleLoading ? (
+                <div className="card p-8 flex items-center justify-center gap-2 text-muted text-sm">
+                  <Loader2 size={14} className="animate-spin" /> Loading profile…
+                </div>
+              ) : singleMetrics ? (
+                <>
+                  <div className="card p-4">
+                    <div className="flex items-start justify-between">
+                      <div>
+                        <div className="flex items-center gap-3">
+                          <span className="font-mono text-accent font-bold text-base">{filterInterviewer}</span>
+                          {(singleMetrics as any).info?.name && (
+                            <span className="text-sm text-tx font-medium">{(singleMetrics as any).info.name}</span>
+                          )}
+                          <RiskBadge
+                            rate={(singleMetrics as any).quality?.total_interviews > 0
+                              ? Math.round(((((singleMetrics as any).quality?.duration_flags ?? 0) + ((singleMetrics as any).quality?.sl_flags ?? 0)) / (singleMetrics as any).quality.total_interviews) * 100)
+                              : 0}
+                            interviews={(singleMetrics as any).quality?.total_interviews ?? 0}
+                          />
+                        </div>
+                        <div className="flex gap-4 mt-1 text-xs text-muted">
+                          {(singleMetrics as any).info?.supervisor_name && (
+                            <span>Supervisor: <span className="text-tx">{(singleMetrics as any).info.supervisor_name}</span></span>
+                          )}
+                          {(singleMetrics as any).info?.region && (
+                            <span>Region: <span className="text-tx">{(singleMetrics as any).info.region}</span></span>
+                          )}
+                        </div>
+                      </div>
+                      {isAdmin && (
+                        <button
+                          onClick={() => setManagingCode(filterInterviewer)}
+                          className="btn-ghost text-xs flex items-center gap-1.5"
+                          style={{ color: C.red }}
+                        >
+                          <ShieldAlert size={12} /> Manage
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    {[
+                      { label: 'Total Interviews', value: (singleMetrics as any).quality?.total_interviews ?? 0, color: C.tx },
+                      { label: 'Duration Flags', value: (singleMetrics as any).quality?.duration_flags ?? 0, color: C.red },
+                      { label: 'SL Flags', value: (singleMetrics as any).quality?.sl_flags ?? 0, color: C.orange },
+                      { label: 'Approved', value: (singleMetrics as any).quality?.approved ?? 0, color: C.green },
+                      { label: 'BC Sessions', value: (singleMetrics as any).backcheck?.bc_count ?? 0, color: C.tx },
+                      { label: 'BC Errors', value: (singleMetrics as any).backcheck?.total_errors ?? 0, color: C.red },
+                      { label: 'Listen-ins', value: (singleMetrics as any).listen_in?.li_count ?? 0, color: C.tx },
+                      { label: 'LI Pass', value: (singleMetrics as any).listen_in?.li_pass ?? 0, color: C.green },
+                    ].map(k => (
+                      <div key={k.label} className="card p-3">
+                        <p className="label mb-0.5">{k.label}</p>
+                        <p className="text-xl font-bold font-display" style={{ color: k.color }}>{k.value}</p>
+                      </div>
+                    ))}
+                  </div>
+
+                  {(singleMetrics as any).by_project?.length > 0 && (
+                    <div className="card p-4">
+                      <p className="label mb-3">Performance by Project</p>
+                      <ResponsiveContainer width="100%" height={220}>
+                        <BarChart data={(singleMetrics as any).by_project} margin={{ left: -20 }}>
+                          <CartesianGrid strokeDasharray="3 3" stroke={C.line} />
+                          <XAxis dataKey="project_name" tick={{ fill: C.muted, fontSize: 10 }} />
+                          <YAxis tick={{ fill: C.muted, fontSize: 10 }} />
+                          <Tooltip {...TooltipStyle} />
+                          <Legend wrapperStyle={{ fontSize: 10, color: C.muted }} verticalAlign="top" />
+                          <Bar dataKey="interviews" name="Interviews" fill={C.accent} radius={[2, 2, 0, 0]} />
+                          <Bar dataKey="dur_flags" name="Dur Flags" fill={C.red} radius={[2, 2, 0, 0]} />
+                          <Bar dataKey="sl_flags" name="SL Flags" fill={C.orange} radius={[2, 2, 0, 0]} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div className="card p-6 text-center text-muted text-sm">
+                  No QC data found for interviewer {filterInterviewer}.
+                </div>
+              )}
+            </div>
+          ) : rows.filter(r => r.total_interviews > 0).length === 0 ? (
             <div className="card p-6 text-center text-muted text-sm border border-line/50">
               No interviewers with QC records match these filters — try a different project or supervisor combination.
             </div>
@@ -707,15 +941,42 @@ export function InterviewerDirectory() {
               <div className="card overflow-hidden">
                 <div className="px-4 py-3 border-b border-line flex items-center justify-between">
                   <p className="label">Interviewer Rankings</p>
-                  <p className="text-xs text-muted">Sorted by risk level · click row for details · click Manage to take action</p>
+                  <p className="text-xs text-muted">{tableRows.length} shown · click column to sort · click row for details</p>
                 </div>
                 <div className="overflow-x-auto">
                 <table className="w-full text-xs">
                   <thead>
                     <tr className="border-b border-line text-muted bg-surface2">
-                      {['Risk', 'Interviewer', 'Supervisor', 'Region', 'Interviews', 'Dur Flags', 'SL Flags', 'Flag Rate', 'BC Errors', 'LI Fail', 'Cancelled', isAdmin ? 'Actions' : ''].filter(Boolean).map(h => (
-                        <th key={h} className="text-left px-3 py-2.5 whitespace-nowrap font-medium text-[10px] uppercase tracking-wide">{h}</th>
-                      ))}
+                      <th className="text-left px-3 py-2.5 whitespace-nowrap font-medium text-[10px] uppercase tracking-wide">Risk</th>
+                      <th className="text-left px-3 py-2.5 whitespace-nowrap font-medium text-[10px] uppercase tracking-wide cursor-pointer hover:text-tx select-none" onClick={() => toggleSort('name')}>
+                        Interviewer <SortArrow col="name" />
+                      </th>
+                      <th className="text-left px-3 py-2.5 whitespace-nowrap font-medium text-[10px] uppercase tracking-wide cursor-pointer hover:text-tx select-none" onClick={() => toggleSort('supervisor_name')}>
+                        Supervisor <SortArrow col="supervisor_name" />
+                      </th>
+                      <th className="text-left px-3 py-2.5 whitespace-nowrap font-medium text-[10px] uppercase tracking-wide">Region</th>
+                      <th className="text-left px-3 py-2.5 whitespace-nowrap font-medium text-[10px] uppercase tracking-wide cursor-pointer hover:text-tx select-none" onClick={() => toggleSort('total_interviews')}>
+                        Interviews <SortArrow col="total_interviews" />
+                      </th>
+                      <th className="text-left px-3 py-2.5 whitespace-nowrap font-medium text-[10px] uppercase tracking-wide cursor-pointer hover:text-tx select-none" onClick={() => toggleSort('duration_flags')}>
+                        Dur Flags <SortArrow col="duration_flags" />
+                      </th>
+                      <th className="text-left px-3 py-2.5 whitespace-nowrap font-medium text-[10px] uppercase tracking-wide cursor-pointer hover:text-tx select-none" onClick={() => toggleSort('sl_flags')}>
+                        SL Flags <SortArrow col="sl_flags" />
+                      </th>
+                      <th className="text-left px-3 py-2.5 whitespace-nowrap font-medium text-[10px] uppercase tracking-wide cursor-pointer hover:text-tx select-none" onClick={() => toggleSort('flag_rate')}>
+                        Flag Rate <SortArrow col="flag_rate" />
+                      </th>
+                      <th className="text-left px-3 py-2.5 whitespace-nowrap font-medium text-[10px] uppercase tracking-wide cursor-pointer hover:text-tx select-none" onClick={() => toggleSort('bc_errors')}>
+                        BC Errors <SortArrow col="bc_errors" />
+                      </th>
+                      <th className="text-left px-3 py-2.5 whitespace-nowrap font-medium text-[10px] uppercase tracking-wide cursor-pointer hover:text-tx select-none" onClick={() => toggleSort('li_fail')}>
+                        LI Fail <SortArrow col="li_fail" />
+                      </th>
+                      <th className="text-left px-3 py-2.5 whitespace-nowrap font-medium text-[10px] uppercase tracking-wide cursor-pointer hover:text-tx select-none" onClick={() => toggleSort('cancelled')}>
+                        Cancelled <SortArrow col="cancelled" />
+                      </th>
+                      {isAdmin && <th className="text-left px-3 py-2.5 whitespace-nowrap font-medium text-[10px] uppercase tracking-wide">Actions</th>}
                     </tr>
                   </thead>
                   <tbody>
@@ -804,7 +1065,7 @@ export function InterviewerDirectory() {
                     <p className="label mb-2">Supervisors</p>
                     <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
                       {(supervisors as Supervisor[]).map(s => {
-                        const count = rows.filter(i => i.supervisor_id === s.id).length
+                        const count = (interviewers as Interviewer[]).filter(i => i.supervisor_id === s.id).length
                         return (
                           <div key={s.id} className="bg-surface2 border border-line rounded-lg p-2.5 flex items-start justify-between gap-1">
                             <div>

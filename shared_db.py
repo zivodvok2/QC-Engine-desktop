@@ -1064,9 +1064,15 @@ def get_all_supervisors() -> list:
 
 def create_supervisor(name: str, email: Optional[str] = None, phone: Optional[str] = None, region: Optional[str] = None) -> int:
     conn = get_conn()
+    existing = conn.execute(
+        "SELECT id FROM supervisors WHERE LOWER(name)=LOWER(%s)", (name.strip(),)
+    ).fetchone()
+    if existing:
+        conn.close()
+        return existing["id"]
     cur = conn.execute(
         "INSERT INTO supervisors (name, email, phone, region) VALUES (%s,%s,%s,%s) RETURNING id",
-        (name, email, phone, region),
+        (name.strip(), email, phone, region),
     )
     sid = cur.fetchone()["id"]
     conn.commit()
@@ -1092,6 +1098,45 @@ def delete_supervisor(supervisor_id: int):
     conn.close()
 
 
+def dedup_supervisors() -> dict:
+    """Merge duplicate supervisor names (case-insensitive). Returns summary."""
+    conn = get_conn()
+    sups = conn.execute("SELECT * FROM supervisors ORDER BY id").fetchall()
+
+    groups: dict = {}
+    for s in sups:
+        key = s["name"].strip().lower()
+        groups.setdefault(key, []).append(dict(s))
+
+    merged = removed = 0
+    for group in groups.values():
+        if len(group) <= 1:
+            continue
+        # Count interviewers per supervisor to pick the canonical one
+        counts = {}
+        for s in group:
+            row = conn.execute(
+                "SELECT COUNT(*) AS cnt FROM interviewers WHERE supervisor_id=%s", (s["id"],)
+            ).fetchone()
+            counts[s["id"]] = row["cnt"] if row else 0
+        canonical = max(group, key=lambda s: (counts[s["id"]], -s["id"]))
+
+        for s in group:
+            if s["id"] == canonical["id"]:
+                continue
+            conn.execute(
+                "UPDATE interviewers SET supervisor_id=%s WHERE supervisor_id=%s",
+                (canonical["id"], s["id"]),
+            )
+            conn.execute("DELETE FROM supervisors WHERE id=%s", (s["id"],))
+            removed += 1
+        merged += 1
+
+    conn.commit()
+    conn.close()
+    return {"groups_merged": merged, "supervisors_removed": removed}
+
+
 def upsert_supervisors_bulk(names: list) -> dict:
     """Find-or-create supervisors by name. Returns {name: id} mapping."""
     if not names:
@@ -1102,7 +1147,9 @@ def upsert_supervisors_bulk(names: list) -> dict:
         name = str(raw).strip()
         if not name or name.lower() in ("none", "null", "nan", ""):
             continue
-        existing = conn.execute("SELECT id FROM supervisors WHERE name=%s", (name,)).fetchone()
+        existing = conn.execute(
+            "SELECT id FROM supervisors WHERE LOWER(name)=LOWER(%s)", (name,)
+        ).fetchone()
         if existing:
             result[name] = existing["id"]
         else:
